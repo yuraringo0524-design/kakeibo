@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Rounded Mplus 1c", "Hiragino Sans", "Yu Gothic", sans-serif;
+
+  --color-orange-50: #fff4ea;
+  --color-orange-100: #ffe6cf;
+  --color-orange-200: #ffd0a3;
+  --color-orange-300: #ffb067;
+  --color-orange-400: #ff9d52;
+  --color-orange-500: #ff8c42;
+  --color-orange-600: #e8672a;
+  --color-orange-700: #c24f1c;
+
+  --color-blue-50: #eefaff;
+  --color-blue-100: #d7f2fb;
+  --color-blue-200: #b3e7f6;
+  --color-blue-300: #7fd3ee;
+  --color-blue-400: #5ac8e8;
+  --color-blue-500: #4fc1e9;
+  --color-blue-600: #2f9dc4;
+  --color-blue-700: #22778f;
+
+  --color-warn-400: #ff5c7a;
+  --color-warn-500: #e5484d;
+  --color-warn-600: #c0323d;
+
+  --color-success-500: #4caf7d;
+}
+
+:root {
+  --bg: #fffbf7;
+  --bg-elevated: #ffffff;
+  --card: #ffffff;
+  --text: #362b22;
+  --text-muted: #8a7b6c;
+  --border: #f0e4d8;
+  --nav-bg: #ffffff;
+  --shadow-color: rgba(180, 130, 80, 0.12);
+}
+
+.dark {
+  --bg: #1b1712;
+  --bg-elevated: #241f19;
+  --card: #241f19;
+  --text: #f5ede4;
+  --text-muted: #b3a494;
+  --border: #362f27;
+  --nav-bg: #1f1a15;
+  --shadow-color: rgba(0, 0, 0, 0.4);
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 4px 16px var(--shadow-color);
+}
+
+.tap-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.animate-toast {
+  animation: toast-in 0.2s ease-out;
+}
