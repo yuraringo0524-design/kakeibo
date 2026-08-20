@@ -11,7 +11,7 @@ import type {
 } from '../types';
 
 export const users: AppUser[] = [
-  { id: 'u1', name: 'あなた', color: '#FF8C42', avatarEmoji: '🧑' },
+  { id: 'u1', name: 'ゆら', color: '#FF8C42', avatarEmoji: '🧑' },
   { id: 'u2', name: 'かずま', color: '#4FC1E9', avatarEmoji: '🧑‍🦱' },
 ];
 
