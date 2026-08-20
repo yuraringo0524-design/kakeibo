@@ -23,9 +23,14 @@ service cloud.firestore {
         request.resource.data.adminId == request.auth.uid &&
         request.resource.data.memberIds == [request.auth.uid];
 
-      // 既存メンバーは自由に読み書きできる。
+      // グループ名・招待コード・メンバー一覧は家計の中身（取引明細など）ではないため、
+      // 招待コードで検索できるようサインイン済みなら誰でも読み取り可能にする。
+      // （取引明細など実際の家計データは下の isMember チェックで別途保護される）
+      allow get, list: if isSignedIn();
+
+      // 更新：既存メンバーは自由に更新できる。
       // まだメンバーでない人は「自分を追加する更新」だけ許可（招待コード参加のため）。
-      allow read, update: if isSignedIn() && (
+      allow update: if isSignedIn() && (
         request.auth.uid in resource.data.memberIds ||
         request.auth.uid in request.resource.data.memberIds
       );
