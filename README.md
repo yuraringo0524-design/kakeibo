@@ -1,32 +1,31 @@
-# React + TypeScript + Vite
+# ふたり家計簿
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+二人で使う家計簿アプリです。
 
-Currently, two official plugins are available:
+🔗 **公開URL: <https://yuraringo0524-design.github.io/kakeibo/>**
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 現在の状態
 
-## React Compiler
+Firebase(認証・データ同期)が未設定のため、現在は**ローカルモード**で動作しています。ローカルモードでは、データはブラウザ(端末)ごとに保存され、他の人とは共有されません。
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Firebaseを設定すると、ログインが必須になり、招待コードでつながった二人だけがリアルタイムでデータを共有できる**クラウドモード**に切り替わります。設定方法は `.env.example` を参照してください。
 
-## Expanding the Oxlint configuration
+## 開発
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev      # 開発サーバー起動
+npm run build    # 本番ビルド
+npm run lint     # Lint
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## デプロイ
+
+`main` ブランチへのpushで GitHub Actions が自動的にビルドし、GitHub Pages へ公開します(`.github/workflows/deploy.yml`)。
+
+## 技術スタック
+
+- React + TypeScript + Vite
+- Tailwind CSS
+- Firebase (Authentication / Firestore) ※クラウドモード時
+- react-router-dom / recharts / lucide-react
