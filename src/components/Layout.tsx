@@ -2,6 +2,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import BottomNav from './BottomNav';
 import RecurringRunner from './RecurringRunner';
 import LocalDataImport from './LocalDataImport';
+import UpdateChecker from './UpdateChecker';
 import { useApp } from '../context/AppContext';
 import { X } from 'lucide-react';
 
@@ -29,6 +30,7 @@ export default function Layout() {
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex justify-center">
       <div className="w-full max-w-md min-h-screen relative flex flex-col">
         <RecurringRunner />
+        <UpdateChecker />
         <SyncErrorBanner />
         <LocalDataImport />
         <main className={`flex-1 ${hideNav ? '' : 'pb-24'}`}>
