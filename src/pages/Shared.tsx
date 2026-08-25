@@ -3,14 +3,26 @@ import { useApp } from '../context/AppContext';
 import { PageHeader, Card, SectionTitle, ConfirmDialog, inputClass } from '../components/ui';
 import { formatYen, displayName } from '../utils/format';
 import { getPeriodRange, filterByRange, sumByType } from '../utils/period';
-import { Copy, Crown, UserPlus, UserMinus, Check, Pencil, Cloud, WifiOff } from 'lucide-react';
+import { Mail, Crown, UserMinus, X, Check, Pencil, Cloud, WifiOff } from 'lucide-react';
 import type { AppUser } from '../types';
 
 export default function Shared() {
-  const { group, users, currentUserId, transactions, addMember, removeMember, updateUserName, mode } = useApp();
-  const [copied, setCopied] = useState(false);
-  const [inviteInput, setInviteInput] = useState('');
-  const [joinMsg, setJoinMsg] = useState('');
+  const {
+    group,
+    users,
+    currentUserId,
+    transactions,
+    invitePartnerByEmail,
+    cancelInvitation,
+    outgoingInvitations,
+    removeMember,
+    updateUserName,
+    mode,
+  } = useApp();
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+  const [inviteMsg, setInviteMsg] = useState('');
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -33,18 +45,21 @@ export default function Shared() {
     [members, monthTx]
   );
 
-  function handleCopy() {
-    navigator.clipboard?.writeText(group.inviteCode).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-
-  function handleJoin() {
-    if (!inviteInput.trim()) return;
-    addMember(`招待メンバー(${inviteInput.trim().slice(0, 6)})`);
-    setJoinMsg('招待コードを承認し、メンバーを追加しました。');
-    setInviteInput('');
-    setTimeout(() => setJoinMsg(''), 2500);
+  async function handleInvite() {
+    const email = inviteEmail.trim();
+    if (!email) return;
+    setInviteError('');
+    setInviting(true);
+    try {
+      await invitePartnerByEmail(email);
+      setInviteMsg(`${email} に招待を送りました。`);
+      setInviteEmail('');
+      setTimeout(() => setInviteMsg(''), 3000);
+    } catch (e) {
+      setInviteError(e instanceof Error && e.message ? '招待に失敗しました。' : '招待に失敗しました。');
+    } finally {
+      setInviting(false);
+    }
   }
 
   function startEditName(id: string, currentName: string) {
@@ -168,55 +183,58 @@ export default function Shared() {
             <SectionTitle>パートナーを招待</SectionTitle>
             <Card className="mb-4">
               <p className="text-xs text-[var(--text-muted)] mb-2">
-                以下の招待コードをパートナーに共有してください。
-                {mode === 'cloud' && 'パートナーがこのアプリでログイン後、「招待コードで参加」からこのコードを入力すると、家計データがリアルタイムで共有されます。'}
+                {mode === 'cloud'
+                  ? 'パートナーのメールアドレスを入力すると招待が届きます。パートナーがこのアプリでアカウント作成・ログイン後、届いた招待から「参加する」を押すと家計データがリアルタイムで共有されます。'
+                  : 'この端末だけに保存されるお試しモードです。メールアドレスを入力するとデモとしてメンバーが追加されます。'}
               </p>
               <div className="flex items-center gap-2">
-                <div className={`${inputClass} flex-1 flex items-center justify-between font-mono tracking-wider`}>
-                  {group.inviteCode}
-                </div>
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleInvite()}
+                  placeholder="partner@example.com"
+                  className={`${inputClass} flex-1`}
+                />
                 <button
-                  onClick={handleCopy}
-                  className="tap-target w-12 h-12 rounded-2xl bg-orange-500 text-white flex items-center justify-center shrink-0"
-                  aria-label="招待コードをコピー"
+                  onClick={handleInvite}
+                  disabled={inviting || !inviteEmail.trim()}
+                  className="tap-target w-12 h-12 rounded-2xl bg-orange-500 text-white flex items-center justify-center shrink-0 disabled:opacity-60"
+                  aria-label="招待する"
                 >
-                  {copied ? <Check size={18} /> : <Copy size={18} />}
+                  <Mail size={18} />
                 </button>
               </div>
-              {copied && <p className="text-xs text-blue-500 font-bold mt-1.5">コピーしました</p>}
+              {inviteError && <p className="text-xs text-warn-500 font-bold mt-1.5">⚠ {inviteError}</p>}
+              {inviteMsg && <p className="text-xs text-blue-500 font-bold mt-1.5">{inviteMsg}</p>}
+
+              {mode === 'cloud' && outgoingInvitations.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-[var(--border)] space-y-2">
+                  <p className="text-xs font-bold text-[var(--text-muted)]">招待中</p>
+                  {outgoingInvitations.map((email) => (
+                    <div key={email} className="flex items-center justify-between text-sm">
+                      <span className="truncate flex-1">{email}</span>
+                      <button
+                        onClick={() => cancelInvitation(email)}
+                        aria-label={`${email} への招待を取り消す`}
+                        className="tap-target w-8 h-8 flex items-center justify-center text-[var(--text-muted)] shrink-0"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
           </>
         )}
 
-        {mode === 'local' ? (
-          <>
-            <SectionTitle>招待コードで参加（デモ）</SectionTitle>
-            <Card className="mb-4">
-              <p className="text-xs text-[var(--text-muted)] mb-2">
-                パートナーから受け取った招待コードを入力してグループに参加します。
-              </p>
-              <div className="flex items-center gap-2">
-                <input
-                  value={inviteInput}
-                  onChange={(e) => setInviteInput(e.target.value)}
-                  placeholder="例）KAKEI-XXXX"
-                  className={`${inputClass} flex-1`}
-                />
-                <button
-                  onClick={handleJoin}
-                  className="tap-target w-12 h-12 rounded-2xl bg-blue-500 text-white flex items-center justify-center shrink-0"
-                  aria-label="参加する"
-                >
-                  <UserPlus size={18} />
-                </button>
-              </div>
-              {joinMsg && <p className="text-xs text-blue-500 font-bold mt-1.5">{joinMsg}</p>}
-            </Card>
-            <p className="text-xs text-[var(--text-muted)] text-center px-4">
-              現在はこの端末だけに保存されるお試しモードです。実際にパートナーの端末とリアルタイムで共有するには、クラウド連携（Firebase）の設定が必要です。
-            </p>
-          </>
-        ) : (
+        {mode === 'local' && (
+          <p className="text-xs text-[var(--text-muted)] text-center px-4">
+            実際にパートナーの端末とリアルタイムで共有するには、クラウド連携（Firebase）の設定が必要です。
+          </p>
+        )}
+        {mode === 'cloud' && (
           <p className="text-xs text-[var(--text-muted)] text-center px-4">
             片方が登録・編集した内容は自動的にもう片方の端末にもリアルタイムで反映されます。
           </p>

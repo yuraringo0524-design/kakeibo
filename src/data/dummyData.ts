@@ -22,7 +22,6 @@ export const group: HouseholdGroup = {
   name: 'ふたりの家計',
   memberIds: ['u1', 'u2'],
   adminId: 'u1',
-  inviteCode: 'KAKEI-7X2P',
 };
 
 export const defaultCategories: Category[] = [

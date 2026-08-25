@@ -44,9 +44,10 @@ const emptyState: AppState = {
   savingsGoals: [],
   notificationSettings: { thresholds: [80, 90, 100], pushEnabled: true },
   users: [],
-  group: { id: '', name: '', memberIds: [], adminId: '', inviteCode: '' },
+  group: { id: '', name: '', memberIds: [], adminId: '' },
   darkMode: storedDarkMode(),
   viewMode: 'all',
+  outgoingInvitations: [],
 };
 
 function withId<T>(id: string, data: unknown): T {
@@ -54,7 +55,7 @@ function withId<T>(id: string, data: unknown): T {
 }
 
 export function CloudAppProvider({ groupId, children }: { groupId: string; children: ReactNode }) {
-  const { user, signOutUser } = useAuth();
+  const { user, signOutUser, invitePartner } = useAuth();
   const [state, setState] = useState<AppState>(emptyState);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -81,7 +82,7 @@ export function CloudAppProvider({ groupId, children }: { groupId: string; child
           const data = snap.data();
           // グループが消えている場合も loaded にしないと永久ローディングになる
           if (!data) {
-            setLoadError('家計グループが見つかりませんでした。招待コードで参加し直してください。');
+            setLoadError('家計グループが見つかりませんでした。パートナーに再度招待してもらってください。');
             setLoaded(true);
             return;
           }
@@ -101,7 +102,6 @@ export function CloudAppProvider({ groupId, children }: { groupId: string; child
             name: data.name ?? 'ふたりの家計',
             memberIds,
             adminId: data.adminId ?? '',
-            inviteCode: data.inviteCode ?? '',
           };
           setLoadError(null);
           setState((s) => ({
@@ -211,6 +211,19 @@ export function CloudAppProvider({ groupId, children }: { groupId: string; child
         onErr
       )
     );
+    unsubs.push(
+      onSnapshot(
+        col('invitations'),
+        (snap) => {
+          const emails = snap.docs
+            .map((d) => (d.data() as { invitedEmail?: string }).invitedEmail)
+            .filter((e): e is string => typeof e === 'string');
+          setState((s) => ({ ...s, outgoingInvitations: emails }));
+        },
+        // 管理者以外はこのサブコレクションを読めないルールなので、エラーはよくある（無視してよい）
+        () => setState((s) => ({ ...s, outgoingInvitations: [] }))
+      )
+    );
 
     return () => unsubs.forEach((u) => u());
   }, [groupId]);
@@ -282,8 +295,11 @@ export function CloudAppProvider({ groupId, children }: { groupId: string; child
         }),
       setViewMode: (v) => setState((s) => ({ ...s, viewMode: v })),
       addMember: () => {
-        /* クラウドモードでは招待コードでの参加のみサポート（Sharedページ側で案内） */
+        /* クラウドモードではメールアドレスでの招待のみサポート（invitePartnerByEmail） */
       },
+      invitePartnerByEmail: (email) => invitePartner(groupId, state.group.name, email),
+      cancelInvitation: (email) =>
+        run(deleteDoc(d('invitations', email.trim().toLowerCase())), '招待の取り消し'),
       removeMember: (userId) =>
         run(
           updateDoc(doc(db!, 'groups', groupId), {
@@ -316,7 +332,7 @@ export function CloudAppProvider({ groupId, children }: { groupId: string; child
       },
       signOutUser,
     };
-  }, [state, groupId, user, signOutUser, syncError, loadError, dismissSyncError]);
+  }, [state, groupId, user, signOutUser, syncError, loadError, dismissSyncError, invitePartner]);
 
   if (!loaded) {
     return (
