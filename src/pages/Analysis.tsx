@@ -28,7 +28,9 @@ export default function Analysis() {
   const { transactions, categories, viewMode } = useApp();
   const [unit, setUnit] = useState<PeriodUnit>('month');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const now = new Date();
+  // 画面を開いたまま日付を跨ぐと、ヘッダの range と棒グラフの now が別インスタンスになり
+  // 1 か月ずれる。基準時刻は 1 つに固定する。
+  const now = useMemo(() => new Date(), []);
 
   // ホーム・予算と同じ絞り込み（全体／個人）を適用する
   const scopedTx = useMemo(() => scopeByViewMode(transactions, viewMode), [transactions, viewMode]);
@@ -56,15 +58,20 @@ export default function Analysis() {
   const insights = useMemo(() => {
     const prevMap = new Map<string, number>();
     previous.filter((t) => t.type === 'expense').forEach((t) => prevMap.set(t.categoryId, (prevMap.get(t.categoryId) ?? 0) + t.amount));
-    return categoryTotals
-      .map((c) => {
-        const prevAmount = prevMap.get(c.categoryId) ?? 0;
-        return { ...c, diff: c.amount - prevAmount };
-      })
+    // 当期の集計だけを起点にすると、支出がゼロになったカテゴリの「減った」が出ない
+    const currentMap = new Map(categoryTotals.map((c) => [c.categoryId, c.amount]));
+    const ids = new Set([...currentMap.keys(), ...prevMap.keys()]);
+    return Array.from(ids)
+      .map((categoryId) => ({
+        categoryId,
+        amount: currentMap.get(categoryId) ?? 0,
+        category: categories.find((c) => c.id === categoryId),
+        diff: (currentMap.get(categoryId) ?? 0) - (prevMap.get(categoryId) ?? 0),
+      }))
       .filter((c) => Math.abs(c.diff) >= 500)
       .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff))
       .slice(0, 3);
-  }, [categoryTotals, previous]);
+  }, [categoryTotals, previous, categories]);
 
   // bar chart: last several sub-periods
   const barData = useMemo(() => {
@@ -122,7 +129,7 @@ export default function Analysis() {
                     <TrendingDown size={14} className="text-blue-500 shrink-0" />
                   )}
                   <span>
-                    {c.category?.name}が前の期間より
+                    {c.category?.name ?? '未分類'}が前の期間より
                     <span className={`font-bold ${c.diff > 0 ? 'text-warn-500' : 'text-blue-500'}`}>
                       {' '}
                       {formatYen(Math.abs(c.diff))}

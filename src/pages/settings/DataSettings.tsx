@@ -6,7 +6,7 @@ import { parseDateStr, todayStr } from '../../utils/format';
 import { Download, Upload, Trash2, RotateCcw, CircleSlash } from 'lucide-react';
 
 export default function DataSettings() {
-  const { transactions, categories, paymentMethods, users, addTransaction, resetDummyData, clearTransactions, mode } =
+  const { transactions, categories, paymentMethods, users, addTransaction, resetDummyData, clearTransactions, deleteAllData, mode } =
     useApp();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -57,7 +57,16 @@ export default function DataSettings() {
           const [date, typeLabel, amountStr, catName, pmName, userName, memo] = cols;
           const amount = Number(String(amountStr ?? '').replace(/[,¥\s]/g, ''));
           // 日付・金額が壊れている行は取り込まずに件数だけ報告する
-          if (!parseDateStr(String(date ?? '')) || !Number.isFinite(amount) || amount <= 0) {
+          // 種別が「収入」「支出」以外だと、旧実装は黙って支出に倒して収支の符号を狂わせていた
+          const isIncome = typeLabel === '収入';
+          const isExpense = typeLabel === '支出';
+          if (
+            !parseDateStr(String(date ?? '')) ||
+            !Number.isFinite(amount) ||
+            amount <= 0 ||
+            !Number.isSafeInteger(amount) ||
+            (!isIncome && !isExpense)
+          ) {
             skipped++;
             return;
           }
@@ -65,7 +74,7 @@ export default function DataSettings() {
           const pm = paymentMethods.find((p) => p.name === pmName);
           const user = users.find((u) => u.name === userName) ?? users[0];
           addTransaction({
-            type: typeLabel === '収入' ? 'income' : 'expense',
+            type: isIncome ? 'income' : 'expense',
             amount,
             date,
             categoryId: category?.id ?? categories[0].id,
@@ -79,7 +88,7 @@ export default function DataSettings() {
 
         setMessage(
           skipped > 0
-            ? `${count}件の明細をインポートしました（${skipped}件は日付か金額が不正のためスキップ）。`
+            ? `${count}件の明細をインポートしました（${skipped}件は日付・金額・種別が不正のためスキップ）。`
             : `${count}件の明細をインポートしました。`
         );
       } catch {
@@ -159,7 +168,9 @@ export default function DataSettings() {
             <p className="font-bold mb-1 flex items-center gap-1.5 text-warn-500">
               <Trash2 size={16} /> すべてのデータを削除
             </p>
-            <p className="text-xs text-[var(--text-muted)] mb-3">この端末に保存されているすべての家計データを削除します。</p>
+            <p className="text-xs text-[var(--text-muted)] mb-3">
+              この端末に保存されている明細・予算・定期取引・貯金目標をすべて削除し、カテゴリと支払い方法を初期状態に戻します（残高は0円）。同じサイトの他のアプリのデータには影響しません。
+            </p>
             <button
               onClick={() => setConfirmDelete(true)}
               className="tap-target w-full rounded-2xl bg-warn-500 text-white font-bold py-3"
@@ -203,12 +214,14 @@ export default function DataSettings() {
       <ConfirmDialog
         open={confirmDelete}
         title="すべてのデータを削除しますか？"
-        message="この操作は元に戻せません。家計データがすべて削除されます。"
+        message="この操作は元に戻せません。明細・予算・定期取引・貯金目標がすべて削除され、カテゴリと支払い方法は初期状態に戻ります。"
         confirmLabel="完全に削除する"
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => {
-          localStorage.clear();
-          location.reload();
+          deleteAllData();
+          setConfirmDelete(false);
+          setMessage('この端末の家計データを削除しました。');
+          setTimeout(() => setMessage(''), 3000);
         }}
       />
     </div>

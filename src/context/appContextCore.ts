@@ -53,6 +53,8 @@ export interface AppContextValue extends AppState {
   removeMember: (userId: string) => void;
   updateUserName: (userId: string, name: string) => void;
   clearTransactions: () => void;
+  /** この端末の家計データを全消去する（ローカルモードのみ）。 */
+  deleteAllData: () => void;
   resetDummyData: () => void;
   /** ログアウト（クラウドモードのみ有効） */
   signOutUser: () => Promise<void>;

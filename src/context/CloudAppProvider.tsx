@@ -308,6 +308,9 @@ export function CloudAppProvider({ groupId, children }: { groupId: string; child
           '明細の一括削除'
         );
       },
+      deleteAllData: () => {
+        /* クラウドは共有データのため、この画面からの一括削除は提供しない */
+      },
       resetDummyData: () => {
         /* クラウドモードには「お試しダミーデータ」の概念がないため何もしない */
       },

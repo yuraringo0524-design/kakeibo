@@ -218,6 +218,26 @@ export function LocalAppProvider({ children }: { children: ReactNode }) {
           users: s.users.map((u) => (u.id === userId ? { ...u, name } : u)),
         })),
       clearTransactions: () => setState((s) => ({ ...s, transactions: [] })),
+      // localStorage.clear() は同じオリジン（GitHub Pages）の他アプリのデータまで消してしまう。
+      // このアプリのキーだけを消し、ダミー値が復活しない「空の家計」を明示的に書き込む。
+      deleteAllData: () => {
+        try {
+          Object.keys(localStorage)
+            .filter((k) => k.startsWith('kakeibo-'))
+            .forEach((k) => localStorage.removeItem(k));
+        } catch {
+          /* 消せなくても state は差し替える */
+        }
+        setState({
+          ...freshState(),
+          transactions: [],
+          budgets: [],
+          recurring: [],
+          savingsGoals: [],
+          paymentMethods: dummy.paymentMethods.map((p) => ({ ...p, balance: 0, creditLimit: 0 })),
+          viewMode: 'all',
+        });
+      },
       // 「ダミーデータにリセット」は明細まで含めて戻す（従来は明細が空のままで説明文と食い違っていた）
       resetDummyData: () => {
         try {
