@@ -1,11 +1,25 @@
+import { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { PageHeader, Card, FormField } from '../../components/ui';
+import { notificationPermission, requestNotificationPermission } from '../../utils/notify';
 import { Bell } from 'lucide-react';
 
 const options = [50, 80, 90, 100, 110];
 
 export default function NotificationSettingsPage() {
   const { notificationSettings, updateNotificationSettings } = useApp();
+  const [permission, setPermission] = useState(notificationPermission());
+
+  // 通知許可はユーザー操作の中でしか求められない。ここで求めないと、
+  // しきい値を設定しても通知は一度も出ない。
+  async function togglePush() {
+    const next = !notificationSettings.pushEnabled;
+    if (next) {
+      const result = await requestNotificationPermission();
+      setPermission(result);
+    }
+    updateNotificationSettings({ pushEnabled: next });
+  }
 
   function toggle(v: number) {
     const has = notificationSettings.thresholds.includes(v);
@@ -25,7 +39,7 @@ export default function NotificationSettingsPage() {
           </span>
           <span className="flex-1 font-bold">プッシュ通知</span>
           <button
-            onClick={() => updateNotificationSettings({ pushEnabled: !notificationSettings.pushEnabled })}
+            onClick={() => void togglePush()}
             role="switch"
             aria-checked={notificationSettings.pushEnabled}
             className={`tap-target relative w-12 h-7 rounded-full transition-colors ${
@@ -65,6 +79,16 @@ export default function NotificationSettingsPage() {
         <p className="text-xs text-[var(--text-muted)] px-1">
           選択した割合に予算の消化率が到達すると通知します。100%を超える設定は予算超過の警告として扱われます。
         </p>
+        {notificationSettings.pushEnabled && permission === 'denied' && (
+          <p className="text-xs text-warn-500 font-bold px-1 mt-2">
+            ⚠ ブラウザ側で通知がブロックされています。サイトの設定から通知を許可してください。
+          </p>
+        )}
+        {notificationSettings.pushEnabled && permission === 'unsupported' && (
+          <p className="text-xs text-[var(--text-muted)] px-1 mt-2">
+            このブラウザは通知に対応していません。ホーム画面の警告表示のみ有効です。
+          </p>
+        )}
       </div>
     </div>
   );

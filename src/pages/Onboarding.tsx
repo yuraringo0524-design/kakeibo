@@ -16,6 +16,8 @@ export default function Onboarding() {
     setSubmitting(true);
     try {
       await createGroup(groupName.trim());
+    } catch {
+      /* error は AuthContext 側に反映される */
     } finally {
       setSubmitting(false);
     }
@@ -75,6 +77,7 @@ export default function Onboarding() {
               placeholder="家計グループ名"
               className={inputClass}
             />
+            {error && <p className="text-xs text-warn-500 font-bold flex items-center gap-1">⚠ {error}</p>}
             <button
               type="submit"
               disabled={submitting}

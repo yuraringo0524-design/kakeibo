@@ -1,19 +1,13 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { AppUser } from '../types';
 import * as dummy from '../data/dummyData';
 import { AppContext, type AppContextValue, type AppState } from './appContextCore';
 
 const STORAGE_KEY = 'kakeibo-app-state-v1';
 
-function loadInitial(): AppState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {
-    /* ignore */
-  }
+function freshState(withDummyTransactions = false): AppState {
   return {
-    transactions: [],
+    transactions: withDummyTransactions ? dummy.transactions : [],
     categories: dummy.defaultCategories,
     paymentMethods: dummy.paymentMethods,
     budgets: dummy.budgets,
@@ -27,6 +21,45 @@ function loadInitial(): AppState {
   };
 }
 
+/**
+ * localStorage の内容はアプリのバージョン差で欠けうる。欠損フィールドを既定値で埋め、
+ * 配列であるべき所が配列でなければ捨てる。ここを素通しすると各画面が undefined 参照で落ちる。
+ */
+function normalize(raw: unknown): AppState {
+  const base = freshState();
+  if (!raw || typeof raw !== 'object') return base;
+  const s = raw as Partial<AppState>;
+  const arr = <T,>(v: unknown, fallback: T[]): T[] => (Array.isArray(v) ? (v as T[]) : fallback);
+
+  return {
+    transactions: arr(s.transactions, base.transactions),
+    categories: arr(s.categories, base.categories),
+    paymentMethods: arr(s.paymentMethods, base.paymentMethods),
+    budgets: arr(s.budgets, base.budgets),
+    recurring: arr(s.recurring, base.recurring),
+    savingsGoals: arr(s.savingsGoals, base.savingsGoals),
+    notificationSettings: {
+      ...base.notificationSettings,
+      ...(s.notificationSettings && typeof s.notificationSettings === 'object' ? s.notificationSettings : {}),
+      thresholds: arr(s.notificationSettings?.thresholds, base.notificationSettings.thresholds),
+    },
+    users: arr(s.users, base.users),
+    group: { ...base.group, ...(s.group && typeof s.group === 'object' ? s.group : {}) },
+    darkMode: typeof s.darkMode === 'boolean' ? s.darkMode : base.darkMode,
+    viewMode: typeof s.viewMode === 'string' ? s.viewMode : base.viewMode,
+  };
+}
+
+function loadInitial(): AppState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return normalize(JSON.parse(raw));
+  } catch {
+    /* 壊れた JSON は初期状態にフォールバックする */
+  }
+  return freshState();
+}
+
 let idSeq = 1000;
 function genId(prefix: string) {
   idSeq += 1;
@@ -35,9 +68,15 @@ function genId(prefix: string) {
 
 export function LocalAppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(loadInitial);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // 容量超過（レシート画像の入れすぎなど）を黙って捨てない
+      setSyncError('端末の保存領域がいっぱいで保存できませんでした。レシート画像を減らすか、古い明細を整理してください。');
+    }
   }, [state]);
 
   useEffect(() => {
@@ -46,11 +85,15 @@ export function LocalAppProvider({ children }: { children: ReactNode }) {
     else root.classList.remove('dark');
   }, [state.darkMode]);
 
+  const dismissSyncError = useCallback(() => setSyncError(null), []);
+
   const value = useMemo<AppContextValue>(
     () => ({
       ...state,
       mode: 'local',
       currentUserId: dummy.currentUserId,
+      syncError,
+      dismissSyncError,
       addTransaction: (t) =>
         setState((s) => ({
           ...s,
@@ -76,16 +119,25 @@ export function LocalAppProvider({ children }: { children: ReactNode }) {
           ...s,
           categories: s.categories.map((x) => (x.id === id ? { ...x, ...c } : x)),
         })),
+      // カテゴリを消したら、予算に残ったカテゴリ別予算も一緒に片付ける（明細は「未分類」表示にフォールバック）
       deleteCategory: (id) =>
-        setState((s) => ({ ...s, categories: s.categories.filter((x) => x.id !== id) })),
+        setState((s) => ({
+          ...s,
+          categories: s.categories.filter((x) => x.id !== id),
+          budgets: s.budgets.map((b) => ({
+            ...b,
+            categoryBudgets: b.categoryBudgets.filter((cb) => cb.categoryId !== id),
+          })),
+        })),
       reorderCategories: (ids) =>
         setState((s) => ({
           ...s,
           categories: ids
             .map((id, idx) => {
-              const cat = s.categories.find((c) => c.id === id)!;
-              return { ...cat, order: idx };
+              const cat = s.categories.find((c) => c.id === id);
+              return cat ? { ...cat, order: idx } : null;
             })
+            .filter((c): c is NonNullable<typeof c> => c !== null)
             .concat(s.categories.filter((c) => !ids.includes(c.id))),
         })),
       addPaymentMethod: (p) =>
@@ -152,10 +204,13 @@ export function LocalAppProvider({ children }: { children: ReactNode }) {
             group: { ...s.group, memberIds: [...s.group.memberIds, newUser.id] },
           };
         }),
+      // memberIds だけ消すと users に幽霊が残り、ホームの絞り込みタブに出続ける
       removeMember: (userId) =>
         setState((s) => ({
           ...s,
+          users: s.users.filter((u) => u.id !== userId),
           group: { ...s.group, memberIds: s.group.memberIds.filter((id) => id !== userId) },
+          viewMode: s.viewMode === userId ? 'all' : s.viewMode,
         })),
       updateUserName: (userId, name) =>
         setState((s) => ({
@@ -163,15 +218,20 @@ export function LocalAppProvider({ children }: { children: ReactNode }) {
           users: s.users.map((u) => (u.id === userId ? { ...u, name } : u)),
         })),
       clearTransactions: () => setState((s) => ({ ...s, transactions: [] })),
+      // 「ダミーデータにリセット」は明細まで含めて戻す（従来は明細が空のままで説明文と食い違っていた）
       resetDummyData: () => {
-        localStorage.removeItem(STORAGE_KEY);
-        setState(loadInitial());
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch {
+          /* 削除できなくても state は差し替える */
+        }
+        setState(freshState(true));
       },
       signOutUser: async () => {
         /* ローカルモードにはログアウトの概念がない */
       },
     }),
-    [state]
+    [state, syncError, dismissSyncError]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Card, EmptyState, inputClass } from '../components/ui';
 import { formatYen, formatDateFull, displayName } from '../utils/format';
+import { sortByDateDesc } from '../utils/period';
 import { Search, SlidersHorizontal } from 'lucide-react';
 import type { TransactionType } from '../types';
 
@@ -20,18 +21,27 @@ export default function TransactionList() {
   const [amountMax, setAmountMax] = useState('');
 
   const filtered = useMemo(() => {
-    return transactions
+    const min = amountMin === '' ? null : Number(amountMin);
+    const max = amountMax === '' ? null : Number(amountMax);
+    const kw = keyword.trim().toLowerCase();
+    const matched = transactions
       .filter((t) => (type === 'all' ? true : t.type === type))
       .filter((t) => (categoryId === 'all' ? true : t.categoryId === categoryId))
       .filter((t) => (paymentMethodId === 'all' ? true : t.paymentMethodId === paymentMethodId))
       .filter((t) => (userId === 'all' ? true : t.userId === userId))
       .filter((t) => (dateFrom ? t.date >= dateFrom : true))
       .filter((t) => (dateTo ? t.date <= dateTo : true))
-      .filter((t) => (amountMin ? t.amount >= Number(amountMin) : true))
-      .filter((t) => (amountMax ? t.amount <= Number(amountMax) : true))
-      .filter((t) => (keyword ? t.memo.toLowerCase().includes(keyword.toLowerCase()) : true))
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
-  }, [transactions, type, categoryId, paymentMethodId, userId, dateFrom, dateTo, amountMin, amountMax, keyword]);
+      // 空欄と 0 を取り違えないよう、数値化に失敗した入力は条件なしとして扱う
+      .filter((t) => (min !== null && Number.isFinite(min) ? t.amount >= min : true))
+      .filter((t) => (max !== null && Number.isFinite(max) ? t.amount <= max : true))
+      .filter((t) => {
+        if (!kw) return true;
+        const catName = categories.find((c) => c.id === t.categoryId)?.name ?? '';
+        return t.memo.toLowerCase().includes(kw) || catName.toLowerCase().includes(kw);
+      });
+    // 比較関数が 0 を返さないと同日の並びが不定になる
+    return sortByDateDesc(matched);
+  }, [transactions, categories, type, categoryId, paymentMethodId, userId, dateFrom, dateTo, amountMin, amountMax, keyword]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, typeof filtered>();
@@ -52,9 +62,11 @@ export default function TransactionList() {
     !!dateTo,
     !!amountMin,
     !!amountMax,
+    !!keyword.trim(),
   ].filter(Boolean).length;
 
   function resetFilters() {
+    setKeyword('');
     setType('all');
     setCategoryId('all');
     setPaymentMethodId('all');
@@ -203,14 +215,14 @@ export default function TransactionList() {
                         >
                           <span
                             className="w-9 h-9 rounded-full flex items-center justify-center text-base shrink-0"
-                            style={{ background: `${cat?.color}22` }}
+                            style={{ background: `${cat?.color ?? '#B7ADA3'}22` }}
                           >
-                            {cat?.icon}
+                            {cat?.icon ?? '📦'}
                           </span>
                           <span className="flex-1 min-w-0">
-                            <p className="text-sm font-bold truncate">{t.memo || cat?.name}</p>
+                            <p className="text-sm font-bold truncate">{t.memo || cat?.name || '未分類'}</p>
                             <p className="text-xs text-[var(--text-muted)] truncate">
-                              {cat?.name} ・ {pm?.name} ・ {displayName(user?.name)}
+                              {cat?.name ?? '未分類'} ・ {pm?.name ?? '支払い方法なし'} ・ {displayName(user?.name)}
                             </p>
                           </span>
                           <span

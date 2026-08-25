@@ -99,7 +99,8 @@ function daysBetween(a: Date, b: Date) {
 }
 
 function toISODate(d: Date) {
-  return d.toISOString().slice(0, 10);
+  // toISOString() は UTC 基準になり JST では 1 日ずれるため、ローカル日付から組み立てる
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function generateTransactions(): Transaction[] {
@@ -229,8 +230,10 @@ function generateTransactions(): Transaction[] {
 export const transactions: Transaction[] = generateTransactions();
 
 function ym(offset: number) {
-  const d = new Date();
-  d.setMonth(d.getMonth() + offset);
+  // setMonth() は月末日に対してロールオーバーする（3/31 で -1 か月 → 3/3）ため、
+  // 1 日固定の Date を組み直して月キーを作る
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 

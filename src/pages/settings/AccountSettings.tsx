@@ -1,17 +1,51 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
 import { PageHeader, Card, FormField, inputClass } from '../../components/ui';
-import { LogOut, ShieldCheck, WifiOff } from 'lucide-react';
+import { LogOut, ShieldCheck, WifiOff, AlertTriangle } from 'lucide-react';
 import { displayName } from '../../utils/format';
 
 export default function AccountSettings() {
   const { users, currentUserId, updateUserName, mode, signOutUser } = useApp();
   const { user: authUser } = useAuth();
-  const me = users.find((u) => u.id === currentUserId)!;
-  const [name, setName] = useState(me.name);
+  // 管理者にメンバーから外された直後などは自分が users に居ない。
+  // 以前は `users.find(...)!` の結果をそのまま参照して白画面になっていた。
+  const me = users.find((u) => u.id === currentUserId);
+  const [name, setName] = useState(me?.name ?? '');
   const email = mode === 'cloud' ? authUser?.email ?? '' : 'この端末だけのローカルモードです';
   const [saved, setSaved] = useState(false);
+
+  // クラウドではメンバー情報が後から届くので、届いた時点で入力欄に反映する
+  useEffect(() => {
+    setName(me?.name ?? '');
+  }, [me?.name]);
+
+  if (!me) {
+    return (
+      <div>
+        <PageHeader title="アカウント" />
+        <div className="px-4 pt-6 pb-8">
+          <Card className="flex items-start gap-3">
+            <AlertTriangle size={20} className="text-warn-500 shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-bold mb-1">この家計グループのメンバーではありません</p>
+              <p className="text-xs text-[var(--text-muted)]">
+                グループから外れたか、まだ参加が反映されていません。ログインし直すか、招待コードで参加し直してください。
+              </p>
+            </div>
+          </Card>
+          {mode === 'cloud' && (
+            <button
+              onClick={() => signOutUser()}
+              className="tap-target w-full mt-4 rounded-2xl border border-warn-500 text-warn-500 font-bold py-3.5 flex items-center justify-center gap-2"
+            >
+              <LogOut size={18} /> ログアウト
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>

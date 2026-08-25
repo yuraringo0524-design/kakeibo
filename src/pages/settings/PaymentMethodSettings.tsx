@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { PageHeader, Card, FormField, inputClass, ConfirmDialog, EmptyState } from '../../components/ui';
 import { formatYen, formatDateJp } from '../../utils/format';
+import { currentBalance, creditUsageThisMonth } from '../../utils/balance';
+import { sortByDateDesc } from '../../utils/period';
 import { Plus, Pencil, Trash2, X } from 'lucide-react';
 import type { PaymentMethod, PaymentMethodType } from '../../types';
 
@@ -24,6 +26,7 @@ export default function PaymentMethodSettings() {
   const [name, setName] = useState('');
   const [type, setType] = useState<PaymentMethodType>('cash');
   const [balance, setBalance] = useState('0');
+  const [creditLimit, setCreditLimit] = useState('0');
   const [color, setColor] = useState(colors[0]);
   const [error, setError] = useState('');
 
@@ -32,6 +35,7 @@ export default function PaymentMethodSettings() {
     setName('');
     setType('cash');
     setBalance('0');
+    setCreditLimit('0');
     setColor(colors[0]);
     setError('');
     setShowForm(true);
@@ -42,6 +46,7 @@ export default function PaymentMethodSettings() {
     setName(p.name);
     setType(p.type);
     setBalance(String(p.balance));
+    setCreditLimit(String(p.creditLimit ?? 0));
     setColor(p.color);
     setError('');
     setShowForm(true);
@@ -49,13 +54,24 @@ export default function PaymentMethodSettings() {
 
   function save() {
     if (!name.trim()) return setError('名称を入力してください');
-    const payload = { name: name.trim(), type, icon: typeIcon[type], color, balance: Number(balance) || 0 };
+    const payload = {
+      name: name.trim(),
+      type,
+      icon: typeIcon[type],
+      color,
+      balance: Number(balance) || 0,
+      // 限度額は種別を変えたときに残さない（クレジット以外では 0 にする）
+      creditLimit: type === 'credit' ? Math.max(0, Number(creditLimit) || 0) : 0,
+    };
     if (editTarget) updatePaymentMethod(editTarget.id, payload);
     else addPaymentMethod(payload);
     setShowForm(false);
   }
 
-  const history = filterId ? transactions.filter((t) => t.paymentMethodId === filterId).slice(0, 30) : [];
+  // 並べ替えずに先頭 30 件を切ると、モードによって新旧が入り混じる
+  const history = filterId
+    ? sortByDateDesc(transactions.filter((t) => t.paymentMethodId === filterId)).slice(0, 30)
+    : [];
 
   return (
     <div>
@@ -72,7 +88,10 @@ export default function PaymentMethodSettings() {
       />
       <div className="px-4 pt-3 pb-8 space-y-3">
         {paymentMethods.map((p) => {
-          const used = p.type === 'credit' ? Math.abs(p.balance) : 0;
+          // 「今月の利用額」「残高」は手入力値ではなく明細から計算する。
+          // 従来は balance の絶対値をそのまま出しており、記録しても数字が動かなかった。
+          const used = p.type === 'credit' ? creditUsageThisMonth(p, transactions) : 0;
+          const live = currentBalance(p, transactions);
           return (
             <Card key={p.id}>
               <div className="flex items-center gap-3 mb-1">
@@ -94,14 +113,17 @@ export default function PaymentMethodSettings() {
                 <div className="mt-2">
                   <p className="text-xs text-[var(--text-muted)]">今月の利用額</p>
                   <p className="text-lg font-extrabold text-orange-500 tabular-nums">{formatYen(used)}</p>
-                  {p.creditLimit && (
+                  {!!p.creditLimit && p.creditLimit > 0 && (
                     <p className="text-xs text-[var(--text-muted)]">利用可能額 {formatYen(p.creditLimit - used)}</p>
                   )}
                 </div>
               ) : (
                 <div className="mt-2">
                   <p className="text-xs text-[var(--text-muted)]">残高</p>
-                  <p className="text-lg font-extrabold tabular-nums">{formatYen(p.balance)}</p>
+                  <p className="text-lg font-extrabold tabular-nums">{formatYen(live)}</p>
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    初期残高 {formatYen(p.balance)} ± 明細
+                  </p>
                 </div>
               )}
               <button
@@ -165,9 +187,21 @@ export default function PaymentMethodSettings() {
                 ))}
               </div>
             </FormField>
-            <FormField label={type === 'credit' ? '今月の利用額（マイナス表記）' : '残高'}>
+            <FormField label={type === 'credit' ? '調整額（通常は0のままで可）' : '初期残高'}>
               <input type="number" inputMode="numeric" value={balance} onChange={(e) => setBalance(e.target.value)} className={inputClass} />
             </FormField>
+            {type === 'credit' && (
+              <FormField label="利用限度額">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  value={creditLimit}
+                  onChange={(e) => setCreditLimit(e.target.value)}
+                  className={inputClass}
+                />
+              </FormField>
+            )}
             <FormField label="カラー">
               <div className="flex gap-2">
                 {colors.map((c) => (

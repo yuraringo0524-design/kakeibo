@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { PageHeader, Card, ConfirmDialog } from '../../components/ui';
+import { parseCsv, toCsv } from '../../utils/csv';
+import { parseDateStr, todayStr } from '../../utils/format';
 import { Download, Upload, Trash2, RotateCcw, CircleSlash } from 'lucide-react';
 
 export default function DataSettings() {
@@ -20,35 +22,51 @@ export default function DataSettings() {
       const user = users.find((u) => u.id === t.userId)?.name ?? '';
       return [t.date, t.type === 'income' ? '収入' : '支出', String(t.amount), cat, pm, user, t.memo];
     });
-    const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    const csv = toCsv([header, ...rows]);
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `kakeibo_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `kakeibo_${todayStr()}.csv`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    // click() 直後に revoke するとブラウザによっては保存に失敗する
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function importCsv(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    // 取り込み先の候補が空だと配列の先頭参照で落ちる
+    if (categories.length === 0 || paymentMethods.length === 0 || users.length === 0) {
+      setMessage('カテゴリ・支払い方法・メンバーの設定が読み込まれていません。少し待ってからお試しください。');
+      setTimeout(() => setMessage(''), 4000);
+      e.target.value = '';
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const text = String(reader.result);
-        const lines = text.split(/\r?\n/).filter(Boolean);
+        const rows = parseCsv(String(reader.result));
         let count = 0;
-        lines.slice(1).forEach((line) => {
-          const cols = line.split(',').map((c) => c.replace(/^"|"$/g, ''));
+        let skipped = 0;
+
+        rows.slice(1).forEach((cols) => {
           const [date, typeLabel, amountStr, catName, pmName, userName, memo] = cols;
-          if (!date || !amountStr) return;
+          const amount = Number(String(amountStr ?? '').replace(/[,¥\s]/g, ''));
+          // 日付・金額が壊れている行は取り込まずに件数だけ報告する
+          if (!parseDateStr(String(date ?? '')) || !Number.isFinite(amount) || amount <= 0) {
+            skipped++;
+            return;
+          }
           const category = categories.find((c) => c.name === catName);
           const pm = paymentMethods.find((p) => p.name === pmName);
           const user = users.find((u) => u.name === userName) ?? users[0];
           addTransaction({
             type: typeLabel === '収入' ? 'income' : 'expense',
-            amount: Number(amountStr) || 0,
+            amount,
             date,
             categoryId: category?.id ?? categories[0].id,
             paymentMethodId: pm?.id ?? paymentMethods[0].id,
@@ -58,10 +76,19 @@ export default function DataSettings() {
           });
           count++;
         });
-        setMessage(`${count}件の明細をインポートしました。`);
+
+        setMessage(
+          skipped > 0
+            ? `${count}件の明細をインポートしました（${skipped}件は日付か金額が不正のためスキップ）。`
+            : `${count}件の明細をインポートしました。`
+        );
       } catch {
         setMessage('CSVの読み込みに失敗しました。形式をご確認ください。');
       }
+      setTimeout(() => setMessage(''), 4000);
+    };
+    reader.onerror = () => {
+      setMessage('ファイルを読み込めませんでした。');
       setTimeout(() => setMessage(''), 3000);
     };
     reader.readAsText(file, 'utf-8');

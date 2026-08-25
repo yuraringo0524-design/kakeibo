@@ -26,7 +26,7 @@ export default function RecurringSettings() {
     setEditTarget(null);
     setType('expense');
     setAmount('');
-    setCategoryId(categories.find((c) => c.type === 'expense')?.id ?? '');
+    setCategoryId(categories.find((c) => c.type === 'expense' || c.type === 'both')?.id ?? '');
     setPaymentMethodId(paymentMethods[0]?.id ?? '');
     setMemo('');
     setFrequency('monthly');
@@ -49,10 +49,15 @@ export default function RecurringSettings() {
   }
 
   function save() {
-    if (!amount || Number(amount) <= 0) return setError('金額を正しく入力してください');
+    const amt = Number(amount);
+    if (!amount.trim() || !Number.isFinite(amt) || amt <= 0) return setError('金額を正しく入力してください');
+    // カテゴリ・支払い方法が空のままだと、自動登録された明細が「未分類」になってしまう
+    if (!categoryId) return setError('カテゴリを選択してください');
+    if (!paymentMethodId) return setError('支払い方法を選択してください');
+    if (!nextDate) return setError('次回予定日を選択してください');
     const payload = {
       type,
-      amount: Number(amount),
+      amount: amt,
       categoryId,
       paymentMethodId,
       userId: editTarget?.userId ?? currentUserId,
@@ -93,7 +98,7 @@ export default function RecurringSettings() {
                       {cat?.icon}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold truncate">{r.memo || cat?.name}</p>
+                      <p className="font-bold truncate">{r.memo || cat?.name || '未分類'}</p>
                       <p className="text-xs text-[var(--text-muted)]">
                         {freqLabel[r.frequency]} ・ {pm?.name} ・ {displayName(user?.name)}
                       </p>
@@ -150,7 +155,7 @@ export default function RecurringSettings() {
                 value={type}
                 onChange={(v) => {
                   setType(v);
-                  setCategoryId(categories.find((c) => c.type === v)?.id ?? '');
+                  setCategoryId(categories.find((c) => c.type === v || c.type === 'both')?.id ?? '');
                 }}
               />
             </div>
@@ -160,7 +165,8 @@ export default function RecurringSettings() {
             <FormField label="カテゴリ">
               <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={inputClass}>
                 {categories
-                  .filter((c) => c.type === type)
+                  .filter((c) => c.type === type || c.type === 'both')
+                  .sort((a, b) => a.order - b.order)
                   .map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.icon} {c.name}

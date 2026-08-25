@@ -15,15 +15,13 @@ import {
   type User,
 } from 'firebase/auth';
 import {
+  arrayUnion,
   collection,
   doc,
   getDoc,
-  getDocs,
   onSnapshot,
-  query,
   setDoc,
   updateDoc,
-  where,
   writeBatch,
 } from 'firebase/firestore';
 import { auth, db, firebaseEnabled } from '../lib/firebase';
@@ -87,11 +85,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     const ref = doc(db, 'users', user.uid);
-    const unsub = onSnapshot(ref, (snap) => {
-      if (snap.exists()) {
-        setProfile(snap.data() as UserProfile);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (snap.exists()) {
+          setProfile(snap.data() as UserProfile);
+          return;
+        }
+        // プロフィール doc が無いと Gate が「読み込み中…」から進めなくなる。
+        // サインアップが途中で落ちた場合などに備え、その場で作り直す。
+        const recovered: UserProfile = {
+          email: user.email ?? '',
+          displayName: user.displayName ?? '',
+          groupId: null,
+          color: palette[Math.floor(Math.random() * palette.length)],
+          avatarEmoji: avatars[Math.floor(Math.random() * avatars.length)],
+        };
+        setProfile(recovered);
+        void setDoc(ref, recovered, { merge: true }).catch((e) => console.error(e));
+      },
+      (e) => {
+        console.error(e);
+        setError('プロフィールを読み込めませんでした。通信状態を確認してください。');
       }
-    });
+    );
     return unsub;
   }, [user]);
 
@@ -101,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (code.includes('weak-password')) return 'パスワードは6文字以上で入力してください。';
     if (code.includes('user-not-found') || code.includes('wrong-password') || code.includes('invalid-credential'))
       return 'メールアドレスまたはパスワードが正しくありません。';
+    if (code.includes('permission-denied')) return '権限がありません。ログインし直してからお試しください。';
     return '通信エラーが発生しました。しばらくしてから再度お試しください。';
   }
 
@@ -126,8 +144,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             avatarEmoji: avatars[Math.floor(Math.random() * avatars.length)],
           };
           await setDoc(doc(db, 'users', cred.user.uid), newProfile);
-        } catch (e: any) {
-          setError(friendlyError(String(e?.code ?? '')));
+        } catch (e) {
+          setError(friendlyError(String((e as { code?: string })?.code ?? '')));
           throw e;
         }
       },
@@ -136,72 +154,92 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setError(null);
         try {
           await signInWithEmailAndPassword(auth, email, password);
-        } catch (e: any) {
-          setError(friendlyError(String(e?.code ?? '')));
+        } catch (e) {
+          setError(friendlyError(String((e as { code?: string })?.code ?? '')));
           throw e;
         }
       },
       signOutUser: async () => {
         if (!auth) return;
+        setProfile(null);
         await signOut(auth);
       },
       createGroup: async (groupName) => {
         if (!auth?.currentUser || !db) return;
         const firestore = db;
         setError(null);
-        const uid = auth.currentUser.uid;
-        const groupRef = doc(collection(firestore, 'groups'));
-        const groupId = groupRef.id;
-        const meColor = profile?.color ?? palette[0];
-        const meAvatar = profile?.avatarEmoji ?? avatars[0];
-        const meName = profile?.displayName ?? auth.currentUser.displayName ?? '';
+        try {
+          const uid = auth.currentUser.uid;
+          const groupRef = doc(collection(firestore, 'groups'));
+          const groupId = groupRef.id;
+          const meColor = profile?.color ?? palette[0];
+          const meAvatar = profile?.avatarEmoji ?? avatars[0];
+          const meName = profile?.displayName ?? auth.currentUser.displayName ?? '';
 
-        const batch = writeBatch(firestore);
-        batch.set(groupRef, {
-          name: groupName || 'ふたりの家計',
-          adminId: uid,
-          inviteCode: genInviteCode(),
-          memberIds: [uid],
-          membersById: { [uid]: { name: meName, color: meColor, avatarEmoji: meAvatar } },
-        });
-        batch.set(doc(firestore, 'users', uid), { groupId }, { merge: true });
-        defaultCategories.forEach((c) => {
-          const { id, ...rest } = c;
-          batch.set(doc(firestore, 'groups', groupId, 'categories', id), rest);
-        });
-        paymentMethods.forEach((p) => {
-          const { id, ...rest } = p;
-          batch.set(doc(firestore, 'groups', groupId, 'paymentMethods', id), { ...rest, balance: 0 });
-        });
-        batch.set(doc(firestore, 'groups', groupId, 'meta', 'notifications'), defaultNotificationSettings);
-        await batch.commit();
+          // 招待コードは重複すると別のグループに合流してしまうため、空きが出るまで引き直す
+          let inviteCode = genInviteCode();
+          for (let i = 0; i < 8; i++) {
+            const taken = await getDoc(doc(firestore, 'inviteCodes', inviteCode));
+            if (!taken.exists()) break;
+            inviteCode = genInviteCode();
+          }
+
+          const batch = writeBatch(firestore);
+          batch.set(groupRef, {
+            name: groupName || 'ふたりの家計',
+            adminId: uid,
+            inviteCode,
+            memberIds: [uid],
+            membersById: { [uid]: { name: meName, color: meColor, avatarEmoji: meAvatar } },
+          });
+          // 招待コード → groupId の逆引き。groups コレクション全体を list 可能にしないための索引。
+          batch.set(doc(firestore, 'inviteCodes', inviteCode), { groupId, createdBy: uid });
+          batch.set(doc(firestore, 'users', uid), { groupId }, { merge: true });
+          defaultCategories.forEach((c) => {
+            const { id, ...rest } = c;
+            batch.set(doc(firestore, 'groups', groupId, 'categories', id), rest);
+          });
+          paymentMethods.forEach((p) => {
+            const { id, ...rest } = p;
+            batch.set(doc(firestore, 'groups', groupId, 'paymentMethods', id), { ...rest, balance: 0 });
+          });
+          batch.set(doc(firestore, 'groups', groupId, 'meta', 'notifications'), defaultNotificationSettings);
+          await batch.commit();
+        } catch (e) {
+          setError(friendlyError(String((e as { code?: string })?.code ?? '')));
+          throw e;
+        }
       },
       joinGroup: async (inviteCode) => {
         if (!auth?.currentUser || !db) return;
         const firestore = db;
         setError(null);
         const uid = auth.currentUser.uid;
-        const q = query(collection(firestore, 'groups'), where('inviteCode', '==', inviteCode.trim().toUpperCase()));
-        const snap = await getDocs(q);
-        if (snap.empty) {
+        const code = inviteCode.trim().toUpperCase();
+
+        // groups を全件 list せず、招待コードの索引 doc だけを引く
+        const indexSnap = await getDoc(doc(firestore, 'inviteCodes', code));
+        const groupId = indexSnap.exists() ? (indexSnap.data().groupId as string | undefined) : undefined;
+        if (!groupId) {
           setError('招待コードが見つかりませんでした。');
           throw new Error('invite-not-found');
         }
-        const groupDoc = snap.docs[0];
-        const groupId = groupDoc.id;
-        const meColor = profile?.color ?? palette[1];
-        const meAvatar = profile?.avatarEmoji ?? avatars[1];
-        const meName = profile?.displayName ?? auth.currentUser.displayName ?? '';
 
-        const existing = (await getDoc(groupDoc.ref)).data() as any;
-        const memberIds: string[] = existing?.memberIds ?? [];
-        if (!memberIds.includes(uid)) memberIds.push(uid);
+        try {
+          const meColor = profile?.color ?? palette[1];
+          const meAvatar = profile?.avatarEmoji ?? avatars[1];
+          const meName = profile?.displayName ?? auth.currentUser.displayName ?? '';
 
-        await updateDoc(groupDoc.ref, {
-          memberIds,
-          [`membersById.${uid}`]: { name: meName, color: meColor, avatarEmoji: meAvatar },
-        });
-        await setDoc(doc(firestore, 'users', uid), { groupId }, { merge: true });
+          // 読み込み→書き戻しだと同時参加で片方が消えるため arrayUnion で追加する
+          await updateDoc(doc(firestore, 'groups', groupId), {
+            memberIds: arrayUnion(uid),
+            [`membersById.${uid}`]: { name: meName, color: meColor, avatarEmoji: meAvatar },
+          });
+          await setDoc(doc(firestore, 'users', uid), { groupId }, { merge: true });
+        } catch (e) {
+          setError(friendlyError(String((e as { code?: string })?.code ?? '')));
+          throw e;
+        }
       },
     }),
     [loading, user, profile, error]
