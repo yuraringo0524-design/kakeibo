@@ -105,6 +105,9 @@ export default function Onboarding() {
             <UserPlus size={18} />
             {submitting ? '作成中…' : 'グループを作成する'}
           </button>
+          {error && pendingInvitations.length === 0 && (
+            <p className="text-xs text-warn-500 font-bold flex items-center gap-1">⚠ {error}</p>
+          )}
           <p className="text-xs text-[var(--text-muted)] text-center">
             作成後、「共有家計」画面からパートナーのメールアドレスで招待できます。
           </p>

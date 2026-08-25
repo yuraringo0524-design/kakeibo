@@ -219,13 +219,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const meAvatar = profile?.avatarEmoji ?? avatars[0];
           const meName = profile?.displayName ?? auth.currentUser.displayName ?? '';
 
-          const batch = writeBatch(firestore);
-          batch.set(groupRef, {
+          // groups/{groupId} 本体を先にコミットする。サブコレクションへの書き込みルール
+          // (isMember(groupId)) は get() で親ドキュメントを参照するが、同一バッチ内で
+          // 未コミットの新規ドキュメントは get() から見えず「存在しない」扱いになり、
+          // 一括で書き込むと permission-denied になっていた。
+          await setDoc(groupRef, {
             name: groupName || 'ふたりの家計',
             adminId: uid,
             memberIds: [uid],
             membersById: { [uid]: { name: meName, color: meColor, avatarEmoji: meAvatar } },
           });
+
+          const batch = writeBatch(firestore);
           defaultCategories.forEach((c) => {
             const { id, ...rest } = c;
             batch.set(doc(firestore, 'groups', groupId, 'categories', id), rest);
