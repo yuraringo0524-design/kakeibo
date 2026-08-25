@@ -106,7 +106,7 @@ export default function Login() {
         </form>
 
         <p className="text-xs text-[var(--text-muted)] text-center mt-6">
-          登録後、家計グループを新しく作成するか、パートナーから受け取った招待コードで参加できます。
+          登録後、家計グループを新しく作成するか、パートナーから届いたメール招待を承認して参加できます。
         </p>
       </div>
     </div>

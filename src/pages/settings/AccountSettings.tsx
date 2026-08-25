@@ -30,7 +30,7 @@ export default function AccountSettings() {
             <div className="text-sm">
               <p className="font-bold mb-1">この家計グループのメンバーではありません</p>
               <p className="text-xs text-[var(--text-muted)]">
-                グループから外れたか、まだ参加が反映されていません。ログインし直すか、招待コードで参加し直してください。
+                グループから外れたか、まだ参加が反映されていません。ログインし直すか、パートナーに再度招待してもらってください。
               </p>
             </div>
           </Card>
