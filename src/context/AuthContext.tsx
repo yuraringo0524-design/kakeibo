@@ -231,6 +231,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
 
           const batch = writeBatch(firestore);
+          // プロフィールの groupId をここで書かないと、作成したグループへ Gate が
+          // 切り替わらず Onboarding 画面から進めなくなる。
+          batch.set(doc(firestore, 'users', uid), { groupId }, { merge: true });
           defaultCategories.forEach((c) => {
             const { id, ...rest } = c;
             batch.set(doc(firestore, 'groups', groupId, 'categories', id), rest);
