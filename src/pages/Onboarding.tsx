@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { inputClass } from '../components/ui';
-import { Users, UserPlus, LogOut } from 'lucide-react';
+import { Users, UserPlus, LogOut, Mail, Check, X } from 'lucide-react';
 
 export default function Onboarding() {
-  const { createGroup, joinGroup, signOutUser, error, clearError, profile } = useAuth();
-  const [tab, setTab] = useState<'create' | 'join'>('create');
+  const { createGroup, pendingInvitations, acceptInvitation, declineInvitation, signOutUser, error, clearError, profile } =
+    useAuth();
   const [groupName, setGroupName] = useState('ふたりの家計');
-  const [inviteCode, setInviteCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [respondingId, setRespondingId] = useState<string | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -23,17 +23,24 @@ export default function Onboarding() {
     }
   }
 
-  async function handleJoin(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleAccept(invitation: (typeof pendingInvitations)[number]) {
     clearError();
-    if (!inviteCode.trim()) return;
-    setSubmitting(true);
+    setRespondingId(invitation.id);
     try {
-      await joinGroup(inviteCode.trim());
+      await acceptInvitation(invitation);
     } catch {
-      /* error は AuthContext 側に反映 */
+      /* error は AuthContext 側に反映される */
     } finally {
-      setSubmitting(false);
+      setRespondingId(null);
+    }
+  }
+
+  async function handleDecline(invitation: (typeof pendingInvitations)[number]) {
+    setRespondingId(invitation.id);
+    try {
+      await declineInvitation(invitation);
+    } finally {
+      setRespondingId(null);
     }
   }
 
@@ -46,68 +53,62 @@ export default function Onboarding() {
           </div>
           <h1 className="text-lg font-extrabold">ようこそ、{profile?.displayName || 'あなた'}さん</h1>
           <p className="text-sm text-[var(--text-muted)] mt-1 text-center">
-            家計グループを新しく作るか、パートナーの招待コードで参加してください。
+            家計グループを新しく作るか、届いている招待に応じてください。
           </p>
         </div>
 
-        <div className="flex bg-black/5 dark:bg-white/10 rounded-full p-1 mb-6">
-          <button
-            onClick={() => setTab('create')}
-            className={`flex-1 text-sm font-bold py-2 rounded-full tap-target ${
-              tab === 'create' ? 'bg-[var(--card)] text-orange-600 shadow-sm' : 'text-[var(--text-muted)]'
-            }`}
-          >
-            新しく作る
-          </button>
-          <button
-            onClick={() => setTab('join')}
-            className={`flex-1 text-sm font-bold py-2 rounded-full tap-target ${
-              tab === 'join' ? 'bg-[var(--card)] text-orange-600 shadow-sm' : 'text-[var(--text-muted)]'
-            }`}
-          >
-            招待コードで参加
-          </button>
-        </div>
-
-        {tab === 'create' ? (
-          <form onSubmit={handleCreate} className="space-y-3">
-            <input
-              value={groupName}
-              onChange={(e) => setGroupName(e.target.value)}
-              placeholder="家計グループ名"
-              className={inputClass}
-            />
-            {error && <p className="text-xs text-warn-500 font-bold flex items-center gap-1">⚠ {error}</p>}
-            <button
-              type="submit"
-              disabled={submitting}
-              className="tap-target w-full rounded-2xl bg-orange-500 text-white font-bold py-3.5 disabled:opacity-60"
-            >
-              {submitting ? '作成中…' : 'グループを作成する'}
-            </button>
-            <p className="text-xs text-[var(--text-muted)] text-center">
-              作成後、招待コードをパートナーに共有して参加してもらえます。
+        {pendingInvitations.length > 0 && (
+          <div className="mb-6">
+            <p className="text-xs font-bold text-[var(--text-muted)] mb-2 flex items-center gap-1.5">
+              <Mail size={13} /> 届いている招待
             </p>
-          </form>
-        ) : (
-          <form onSubmit={handleJoin} className="space-y-3">
-            <input
-              value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value)}
-              placeholder="例）KAKEI-XXXX"
-              className={`${inputClass} font-mono tracking-wider`}
-            />
-            {error && <p className="text-xs text-warn-500 font-bold flex items-center gap-1">⚠ {error}</p>}
-            <button
-              type="submit"
-              disabled={submitting}
-              className="tap-target w-full rounded-2xl bg-blue-500 text-white font-bold py-3.5 flex items-center justify-center gap-1.5 disabled:opacity-60"
-            >
-              <UserPlus size={18} />
-              {submitting ? '参加中…' : '参加する'}
-            </button>
-          </form>
+            <div className="space-y-2">
+              {pendingInvitations.map((inv) => (
+                <div key={inv.id} className="card p-4">
+                  <p className="font-bold text-sm mb-3">{inv.groupName} から招待されています</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleDecline(inv)}
+                      disabled={respondingId === inv.id}
+                      className="tap-target flex-1 flex items-center justify-center gap-1 rounded-2xl border border-[var(--border)] font-bold text-sm py-2.5 disabled:opacity-60"
+                    >
+                      <X size={15} /> 辞退
+                    </button>
+                    <button
+                      onClick={() => handleAccept(inv)}
+                      disabled={respondingId === inv.id}
+                      className="tap-target flex-1 flex items-center justify-center gap-1 rounded-2xl bg-blue-500 text-white font-bold text-sm py-2.5 disabled:opacity-60"
+                    >
+                      <Check size={15} /> {respondingId === inv.id ? '参加中…' : '参加する'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {error && <p className="text-xs text-warn-500 font-bold flex items-center gap-1 mt-2">⚠ {error}</p>}
+          </div>
         )}
+
+        <p className="text-xs font-bold text-[var(--text-muted)] mb-2">新しく家計グループを作る</p>
+        <form onSubmit={handleCreate} className="space-y-3">
+          <input
+            value={groupName}
+            onChange={(e) => setGroupName(e.target.value)}
+            placeholder="家計グループ名"
+            className={inputClass}
+          />
+          <button
+            type="submit"
+            disabled={submitting}
+            className="tap-target w-full flex items-center justify-center gap-1.5 rounded-2xl bg-orange-500 text-white font-bold py-3.5 disabled:opacity-60"
+          >
+            <UserPlus size={18} />
+            {submitting ? '作成中…' : 'グループを作成する'}
+          </button>
+          <p className="text-xs text-[var(--text-muted)] text-center">
+            作成後、「共有家計」画面からパートナーのメールアドレスで招待できます。
+          </p>
+        </form>
 
         <button
           onClick={() => signOutUser()}

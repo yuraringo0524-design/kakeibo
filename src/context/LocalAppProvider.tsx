@@ -18,6 +18,7 @@ function freshState(withDummyTransactions = false): AppState {
     group: dummy.group,
     darkMode: false,
     viewMode: 'all',
+    outgoingInvitations: [],
   };
 }
 
@@ -47,6 +48,7 @@ function normalize(raw: unknown): AppState {
     group: { ...base.group, ...(s.group && typeof s.group === 'object' ? s.group : {}) },
     darkMode: typeof s.darkMode === 'boolean' ? s.darkMode : base.darkMode,
     viewMode: typeof s.viewMode === 'string' ? s.viewMode : base.viewMode,
+    outgoingInvitations: [],
   };
 }
 
@@ -204,6 +206,26 @@ export function LocalAppProvider({ children }: { children: ReactNode }) {
             group: { ...s.group, memberIds: [...s.group.memberIds, newUser.id] },
           };
         }),
+      // ローカルモードには実際のメール送信・承認フローが無いため、
+      // 入力されたメールアドレスからその場でメンバーを追加する疑似デモとして扱う
+      invitePartnerByEmail: async (email) => {
+        setState((s) => {
+          const newUser: AppUser = {
+            id: genId('u'),
+            name: `招待メンバー(${email.split('@')[0].slice(0, 10)})`,
+            color: '#7FD3EE',
+            avatarEmoji: '🙂',
+          };
+          return {
+            ...s,
+            users: [...s.users, newUser],
+            group: { ...s.group, memberIds: [...s.group.memberIds, newUser.id] },
+          };
+        });
+      },
+      cancelInvitation: () => {
+        /* ローカルモードでは送信済み招待の概念が無い */
+      },
       // memberIds だけ消すと users に幽霊が残り、ホームの絞り込みタブに出続ける
       removeMember: (userId) =>
         setState((s) => ({

@@ -16,39 +16,24 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
-    // 招待コード → groupId の逆引き索引。
-    // groups を全件 list できるようにすると全世帯の招待コードが読めてしまうため、
-    // 「正確なコードを知っている人だけが get できる」この索引だけを公開する。
-    // create は「参照先グループの実際の管理者本人」だけに絞る（自称の createdBy は信用しない）。
-    // groupId 以外のフィールドは一切持たせない —— アプリの createGroup() もこれに合わせて
-    // { groupId } だけを書き込む。
-    match /inviteCodes/{code} {
-      allow get: if isSignedIn();
-      allow list: if false;                                   // 総当たり列挙を防ぐ
-      allow create: if isSignedIn() &&
-        request.resource.data.keys().hasOnly(['groupId']) &&
-        get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.adminId == request.auth.uid;
-      allow update, delete: if false;
-    }
-
-    // 家計グループ本体（名前・メンバー・招待コード）
+    // 家計グループ本体（名前・メンバー）
     match /groups/{groupId} {
 
-      // 参加希望者が自分“だけ”を追加する更新かどうか。
-      // 以前は「更新後の memberIds に自分がいれば通す」だったため、
-      // 任意のグループを乗っ取って明細を読み書きできてしまっていた。
-      // memberIds の増分チェックだけでは、参加と同時に他メンバーの membersById
-      // （表示名・色・アバター）まで書き換えられてしまうため、そこも固定する。
+      // 招待メールアドレス宛に、自分“だけ”を追加する更新かどうか。
+      // groups/{groupId}/invitations/{email} が存在する（＝管理者が自分のメールアドレスを
+      // 招待した）ときだけ許可し、他メンバーの membersById（表示名・色・アバター）を
+      // 一緒に書き換えることは許さない。
       function isSelfJoin() {
         return !(request.auth.uid in resource.data.memberIds) &&
           request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1 &&
           request.auth.uid in request.resource.data.memberIds &&
           request.resource.data.adminId == resource.data.adminId &&
-          request.resource.data.inviteCode == resource.data.inviteCode &&
           request.resource.data.name == resource.data.name &&
           request.resource.data.membersById.keys().hasOnly(
             resource.data.membersById.keys().concat([request.auth.uid])
-          );
+          ) &&
+          request.auth.token.email != null &&
+          exists(/databases/$(database)/documents/groups/$(groupId)/invitations/$(request.auth.token.email.lower()));
       }
 
       // 作成：自分だけをメンバーとして持つグループを作れる
@@ -56,17 +41,39 @@ service cloud.firestore {
         request.resource.data.adminId == request.auth.uid &&
         request.resource.data.memberIds == [request.auth.uid];
 
-      // 読み取り：メンバーのみ。招待コードは inviteCodes 索引から辿るため list は不要。
+      // 読み取り：メンバーのみ
       allow get: if isMember(groupId);
       allow list: if false;
 
-      // 更新：メンバー本人、または招待コードから辿り着いた参加希望者の自己追加のみ
+      // 更新：メンバー本人、または招待メールアドレス宛に届いた招待を承認する自己追加のみ
       allow update: if isSignedIn() && (
         request.auth.uid in resource.data.memberIds ||
         isSelfJoin()
       );
 
       allow delete: if isSignedIn() && request.auth.uid == resource.data.adminId;
+
+      // パートナーへのメール招待。ドキュメントIDは招待先メールアドレス（小文字化）で固定し、
+      // 上の isSelfJoin() から exists() 1回で「自分宛の招待があるか」を判定できるようにする。
+      match /invitations/{invitationId} {
+        allow create: if isMember(groupId) &&
+          request.resource.data.invitedBy == request.auth.uid &&
+          request.resource.data.invitedEmail is string &&
+          request.resource.data.invitedEmail == invitationId &&
+          invitationId == invitationId.lower();
+        // 管理者側（グループのメンバー）は招待中一覧を見るために list/get できる。
+        // 招待された本人は、自分のメールアドレス宛の招待だけ get/list できる
+        // （collectionGroup クエリでも resource.data.invitedEmail が自分のメールと一致する
+        // ものしか返らない）。
+        allow get, list: if isMember(groupId) ||
+          (isSignedIn() && request.auth.token.email != null &&
+            resource.data.invitedEmail == request.auth.token.email.lower());
+        // 管理者は取り消せる。招待された本人は、辞退または参加後の後始末として消せる。
+        allow delete: if isMember(groupId) ||
+          (isSignedIn() && request.auth.token.email != null &&
+            resource.data.invitedEmail == request.auth.token.email.lower());
+        allow update: if false;
+      }
 
       // 家計データ本体（明細・カテゴリ・支払い方法・予算・定期取引・貯金目標・通知設定）
       match /{collection}/{docId} {

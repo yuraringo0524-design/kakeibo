@@ -23,6 +23,8 @@ export interface AppState {
   group: HouseholdGroup;
   darkMode: boolean;
   viewMode: 'all' | string; // 'all' or userId
+  /** このグループ宛に送信済みで、まだ承認されていない招待メールアドレス一覧（クラウドモードのみ）。 */
+  outgoingInvitations: string[];
 }
 
 export interface AppContextValue extends AppState {
@@ -50,6 +52,10 @@ export interface AppContextValue extends AppState {
   toggleDarkMode: () => void;
   setViewMode: (v: string) => void;
   addMember: (name: string) => void;
+  /** パートナーをメールアドレスで招待する（クラウドモードのみ有効。ローカルモードは疑似デモ）。 */
+  invitePartnerByEmail: (email: string) => Promise<void>;
+  /** 送信済みの招待を取り消す。 */
+  cancelInvitation: (email: string) => void;
   removeMember: (userId: string) => void;
   updateUserName: (userId: string, name: string) => void;
   clearTransactions: () => void;

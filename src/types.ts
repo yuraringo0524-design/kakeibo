@@ -14,7 +14,14 @@ export interface HouseholdGroup {
   name: string;
   memberIds: string[];
   adminId: string;
-  inviteCode: string;
+}
+
+export interface PendingInvitation {
+  /** 招待ドキュメントの Firestore パス（承認・辞退で参照する） */
+  id: string;
+  groupId: string;
+  groupName: string;
+  invitedEmail: string;
 }
 
 export interface Category {

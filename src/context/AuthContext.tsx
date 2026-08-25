@@ -17,15 +17,19 @@ import {
 import {
   arrayUnion,
   collection,
+  collectionGroup,
+  deleteDoc,
   doc,
-  getDoc,
   onSnapshot,
+  query,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import { auth, db, firebaseEnabled } from '../lib/firebase';
 import { defaultCategories, paymentMethods, defaultNotificationSettings } from '../data/dummyData';
+import type { PendingInvitation } from '../types';
 
 interface UserProfile {
   email: string;
@@ -42,11 +46,18 @@ interface AuthContextValue {
   profile: UserProfile | null;
   error: string | null;
   clearError: () => void;
+  /** 自分のメールアドレス宛に届いている、まだ承認していない招待。 */
+  pendingInvitations: PendingInvitation[];
   signUp: (email: string, password: string, displayName: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOutUser: () => Promise<void>;
   createGroup: (groupName: string) => Promise<void>;
-  joinGroup: (inviteCode: string) => Promise<void>;
+  /** 管理者が、パートナーのメールアドレス宛に招待を送る。 */
+  invitePartner: (groupId: string, groupName: string, email: string) => Promise<void>;
+  /** 招待を承認してグループに参加する。 */
+  acceptInvitation: (invitation: PendingInvitation) => Promise<void>;
+  /** 招待を辞退する（届いた側）。 */
+  declineInvitation: (invitation: PendingInvitation) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -54,11 +65,8 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const palette = ['#FF8C42', '#4FC1E9', '#5AC8E8', '#F4A65E', '#7FD3EE'];
 const avatars = ['🧑', '🧑‍🦱', '🙂', '👩', '🧑‍🦰'];
 
-function genInviteCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return `KAKEI-${code}`;
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -66,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(firebaseEnabled);
   const [error, setError] = useState<string | null>(null);
+  const [pendingInvitations, setPendingInvitations] = useState<PendingInvitation[]>([]);
 
   useEffect(() => {
     if (!firebaseEnabled || !auth) {
@@ -112,6 +121,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsub;
   }, [user]);
 
+  // 自分のメールアドレス宛の招待をグループ横断で監視する。
+  // Firestore ルール側で resource.data.invitedEmail == 自分のメールアドレス のときだけ
+  // list を許可しているため、他人宛の招待は取得できない。
+  useEffect(() => {
+    if (!firebaseEnabled || !db || !user?.email) {
+      setPendingInvitations([]);
+      return;
+    }
+    const firestore = db;
+    const email = normalizeEmail(user.email);
+    const q = query(collectionGroup(firestore, 'invitations'), where('invitedEmail', '==', email));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: PendingInvitation[] = snap.docs.map((d) => {
+          const data = d.data() as { groupId: string; groupName: string; invitedEmail: string };
+          return {
+            id: d.ref.path,
+            groupId: data.groupId,
+            groupName: data.groupName || 'ふたりの家計',
+            invitedEmail: data.invitedEmail,
+          };
+        });
+        setPendingInvitations(list);
+      },
+      (e) => {
+        console.error(e);
+        // 招待の取得に失敗してもオンボーディング自体は続けられるようにする
+      }
+    );
+    return unsub;
+  }, [user]);
+
   function friendlyError(code: string): string {
     if (code.includes('email-already-in-use')) return 'このメールアドレスは既に登録されています。';
     if (code.includes('invalid-email')) return 'メールアドレスの形式が正しくありません。';
@@ -129,6 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       profile,
       error,
+      pendingInvitations,
       clearError: () => setError(null),
       signUp: async (email, password, displayName) => {
         if (!auth || !db) return;
@@ -137,7 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const cred = await createUserWithEmailAndPassword(auth, email, password);
           await updateProfile(cred.user, { displayName });
           const newProfile: UserProfile = {
-            email,
+            email: normalizeEmail(email),
             displayName,
             groupId: null,
             color: palette[Math.floor(Math.random() * palette.length)],
@@ -176,27 +219,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const meAvatar = profile?.avatarEmoji ?? avatars[0];
           const meName = profile?.displayName ?? auth.currentUser.displayName ?? '';
 
-          // 招待コードは重複すると別のグループに合流してしまうため、空きが出るまで引き直す
-          let inviteCode = genInviteCode();
-          for (let i = 0; i < 8; i++) {
-            const taken = await getDoc(doc(firestore, 'inviteCodes', inviteCode));
-            if (!taken.exists()) break;
-            inviteCode = genInviteCode();
-          }
-
           const batch = writeBatch(firestore);
           batch.set(groupRef, {
             name: groupName || 'ふたりの家計',
             adminId: uid,
-            inviteCode,
             memberIds: [uid],
             membersById: { [uid]: { name: meName, color: meColor, avatarEmoji: meAvatar } },
           });
-          // 招待コード → groupId の逆引き。groups コレクション全体を list 可能にしないための索引。
-          // Firestore ルール側で「このグループの adminId 本人か」を検証するため、
-          // groupId 以外のフィールドは持たせない（hasOnly(['groupId']) で強制）。
-          batch.set(doc(firestore, 'inviteCodes', inviteCode), { groupId });
-          batch.set(doc(firestore, 'users', uid), { groupId }, { merge: true });
           defaultCategories.forEach((c) => {
             const { id, ...rest } = c;
             batch.set(doc(firestore, 'groups', groupId, 'categories', id), rest);
@@ -212,39 +241,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw e;
         }
       },
-      joinGroup: async (inviteCode) => {
+      invitePartner: async (groupId, groupName, email) => {
         if (!auth?.currentUser || !db) return;
-        const firestore = db;
         setError(null);
-        const uid = auth.currentUser.uid;
-        const code = inviteCode.trim().toUpperCase();
-
-        // groups を全件 list せず、招待コードの索引 doc だけを引く
-        const indexSnap = await getDoc(doc(firestore, 'inviteCodes', code));
-        const groupId = indexSnap.exists() ? (indexSnap.data().groupId as string | undefined) : undefined;
-        if (!groupId) {
-          setError('招待コードが見つかりませんでした。');
-          throw new Error('invite-not-found');
+        const normalized = normalizeEmail(email);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+          setError('メールアドレスの形式が正しくありません。');
+          throw new Error('invalid-email');
         }
-
+        if (normalized === normalizeEmail(auth.currentUser.email ?? '')) {
+          setError('自分自身のメールアドレスは招待できません。');
+          throw new Error('self-invite');
+        }
         try {
-          const meColor = profile?.color ?? palette[1];
-          const meAvatar = profile?.avatarEmoji ?? avatars[1];
-          const meName = profile?.displayName ?? auth.currentUser.displayName ?? '';
-
-          // 読み込み→書き戻しだと同時参加で片方が消えるため arrayUnion で追加する
-          await updateDoc(doc(firestore, 'groups', groupId), {
-            memberIds: arrayUnion(uid),
-            [`membersById.${uid}`]: { name: meName, color: meColor, avatarEmoji: meAvatar },
+          // ドキュメントIDをメールアドレス（小文字化）にすることで、
+          // 参加時に Firestore ルールから「自分宛の招待が存在するか」を
+          // get() 1回で判定できるようにする。
+          await setDoc(doc(db, 'groups', groupId, 'invitations', normalized), {
+            invitedEmail: normalized,
+            invitedBy: auth.currentUser.uid,
+            groupName: groupName || 'ふたりの家計',
           });
-          await setDoc(doc(firestore, 'users', uid), { groupId }, { merge: true });
         } catch (e) {
           setError(friendlyError(String((e as { code?: string })?.code ?? '')));
           throw e;
         }
       },
+      acceptInvitation: async (invitation) => {
+        if (!auth?.currentUser || !db) return;
+        const firestore = db;
+        setError(null);
+        try {
+          const uid = auth.currentUser.uid;
+          const meColor = profile?.color ?? palette[1];
+          const meAvatar = profile?.avatarEmoji ?? avatars[1];
+          const meName = profile?.displayName ?? auth.currentUser.displayName ?? '';
+
+          // 読み込み→書き戻しだと同時参加で片方が消えるため arrayUnion で追加する
+          await updateDoc(doc(firestore, 'groups', invitation.groupId), {
+            memberIds: arrayUnion(uid),
+            [`membersById.${uid}`]: { name: meName, color: meColor, avatarEmoji: meAvatar },
+          });
+          await setDoc(doc(firestore, 'users', uid), { groupId: invitation.groupId }, { merge: true });
+          // 使い終わった招待は消しておく（招待した側の一覧からも消える）
+          await deleteDoc(doc(firestore, invitation.id)).catch(() => {});
+        } catch (e) {
+          setError(friendlyError(String((e as { code?: string })?.code ?? '')));
+          throw e;
+        }
+      },
+      declineInvitation: async (invitation) => {
+        if (!db) return;
+        await deleteDoc(doc(db, invitation.id)).catch((e) => console.error(e));
+      },
     }),
-    [loading, user, profile, error]
+    [loading, user, profile, error, pendingInvitations]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
