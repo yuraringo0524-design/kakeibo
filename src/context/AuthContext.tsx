@@ -193,7 +193,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             membersById: { [uid]: { name: meName, color: meColor, avatarEmoji: meAvatar } },
           });
           // 招待コード → groupId の逆引き。groups コレクション全体を list 可能にしないための索引。
-          batch.set(doc(firestore, 'inviteCodes', inviteCode), { groupId, createdBy: uid });
+          // Firestore ルール側で「このグループの adminId 本人か」を検証するため、
+          // groupId 以外のフィールドは持たせない（hasOnly(['groupId']) で強制）。
+          batch.set(doc(firestore, 'inviteCodes', inviteCode), { groupId });
           batch.set(doc(firestore, 'users', uid), { groupId }, { merge: true });
           defaultCategories.forEach((c) => {
             const { id, ...rest } = c;
