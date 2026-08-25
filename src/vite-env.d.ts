@@ -12,3 +12,6 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// vite.config.ts の define で埋め込まれるビルド時刻（UpdateChecker が参照する）
+declare const __BUILD_ID__: string;
