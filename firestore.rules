@@ -61,17 +61,24 @@ service cloud.firestore {
           request.resource.data.invitedEmail is string &&
           request.resource.data.invitedEmail == invitationId &&
           invitationId == invitationId.lower();
-        // 管理者側（グループのメンバー）は招待中一覧を見るために list/get できる。
-        // 招待された本人は、自分のメールアドレス宛の招待だけ get/list できる
-        // （collectionGroup クエリでも resource.data.invitedEmail が自分のメールと一致する
-        // ものしか返らない）。
-        allow get, list: if isMember(groupId) ||
-          (isSignedIn() && request.auth.token.email != null &&
-            resource.data.invitedEmail == request.auth.token.email.lower());
-        // 管理者は取り消せる。招待された本人は、辞退または参加後の後始末として消せる。
-        allow delete: if isMember(groupId) ||
-          (isSignedIn() && request.auth.token.email != null &&
-            resource.data.invitedEmail == request.auth.token.email.lower());
+        // get/list は resource.data だけを見る条件にする。招待された側は
+        // collectionGroup('invitations') を invitedEmail で絞り込んで自分宛の招待を
+        // 横断検索する。ここで isMember(groupId) のような「クエリのパスから決まるが
+        // ドキュメント自身のデータではない」条件を OR に混ぜると、Firestore は
+        // 「返されうる全ドキュメントについて安全か」をクエリだけから証明できなくなり、
+        // list 自体を丸ごと拒否してしまう。管理者側の一覧も同じ理由で
+        // invitedBy == 自分 に絞り込んだクエリを使う（クライアント側もそれに合わせて
+        // where('invitedBy', '==', uid) を付けている）。
+        allow get, list: if isSignedIn() && (
+          resource.data.invitedBy == request.auth.uid ||
+          (request.auth.token.email != null &&
+            resource.data.invitedEmail == request.auth.token.email.lower())
+        );
+        allow delete: if isSignedIn() && (
+          resource.data.invitedBy == request.auth.uid ||
+          (request.auth.token.email != null &&
+            resource.data.invitedEmail == request.auth.token.email.lower())
+        );
         allow update: if false;
       }
 
