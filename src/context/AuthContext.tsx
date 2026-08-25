@@ -136,10 +136,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       q,
       (snap) => {
         const list: PendingInvitation[] = snap.docs.map((d) => {
-          const data = d.data() as { groupId: string; groupName: string; invitedEmail: string };
+          const data = d.data() as { groupId?: string; groupName: string; invitedEmail: string };
+          // groupId フィールドが無い古い招待ドキュメントでも、パス
+          // groups/{groupId}/invitations/{email} から親のグループIDを復元できるようにする。
+          const groupId = data.groupId ?? d.ref.parent.parent?.id ?? '';
           return {
             id: d.ref.path,
-            groupId: data.groupId,
+            groupId,
             groupName: data.groupName || 'ふたりの家計',
             invitedEmail: data.invitedEmail,
           };
@@ -266,6 +269,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // 参加時に Firestore ルールから「自分宛の招待が存在するか」を
           // get() 1回で判定できるようにする。
           await setDoc(doc(db, 'groups', groupId, 'invitations', normalized), {
+            groupId,
             invitedEmail: normalized,
             invitedBy: auth.currentUser.uid,
             groupName: groupName || 'ふたりの家計',
