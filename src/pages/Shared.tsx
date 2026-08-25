@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import { PageHeader, Card, SectionTitle, ConfirmDialog, inputClass } from '../components/ui';
 import { formatYen, displayName } from '../utils/format';
 import { getPeriodRange, filterByRange, sumByType } from '../utils/period';
-import { Mail, Crown, UserMinus, X, Check, Pencil, Cloud, WifiOff } from 'lucide-react';
+import { Mail, Crown, UserMinus, Check, Pencil, Cloud, WifiOff } from 'lucide-react';
 import type { AppUser } from '../types';
 
 export default function Shared() {
@@ -13,8 +13,6 @@ export default function Shared() {
     currentUserId,
     transactions,
     invitePartnerByEmail,
-    cancelInvitation,
-    outgoingInvitations,
     removeMember,
     updateUserName,
     mode,
@@ -207,24 +205,6 @@ export default function Shared() {
               </div>
               {inviteError && <p className="text-xs text-warn-500 font-bold mt-1.5">⚠ {inviteError}</p>}
               {inviteMsg && <p className="text-xs text-blue-500 font-bold mt-1.5">{inviteMsg}</p>}
-
-              {mode === 'cloud' && outgoingInvitations.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-[var(--border)] space-y-2">
-                  <p className="text-xs font-bold text-[var(--text-muted)]">招待中</p>
-                  {outgoingInvitations.map((email) => (
-                    <div key={email} className="flex items-center justify-between text-sm">
-                      <span className="truncate flex-1">{email}</span>
-                      <button
-                        onClick={() => cancelInvitation(email)}
-                        aria-label={`${email} への招待を取り消す`}
-                        className="tap-target w-8 h-8 flex items-center justify-center text-[var(--text-muted)] shrink-0"
-                      >
-                        <X size={15} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
             </Card>
           </>
         )}

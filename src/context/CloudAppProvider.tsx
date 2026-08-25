@@ -8,10 +8,8 @@ import {
   doc,
   getDocs,
   onSnapshot,
-  query,
   setDoc,
   updateDoc,
-  where,
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -213,30 +211,8 @@ export function CloudAppProvider({ groupId, children }: { groupId: string; child
         onErr
       )
     );
-    // Firestore の list ルールは、招待された側が使う collectionGroup クエリ
-    // （invitedEmail で絞り込み）と、ここで使う「自分が送った招待」の両方を
-    // OR で許可している。list の安全性をクエリだけから証明できるよう、
-    // ルール側は resource.data だけを見る条件にしてあるため、
-    // クライアント側も invitedBy で絞り込む必要がある
-    // （絞り込まずに送ると、Firestore がクエリの安全性を証明できず拒否する）。
-    if (user?.uid) {
-      const invitationsQuery = query(col('invitations'), where('invitedBy', '==', user.uid));
-      unsubs.push(
-        onSnapshot(
-          invitationsQuery,
-          (snap) => {
-            const emails = snap.docs
-              .map((d) => (d.data() as { invitedEmail?: string }).invitedEmail)
-              .filter((e): e is string => typeof e === 'string');
-            setState((s) => ({ ...s, outgoingInvitations: emails }));
-          },
-          () => setState((s) => ({ ...s, outgoingInvitations: [] }))
-        )
-      );
-    }
-
     return () => unsubs.forEach((u) => u());
-  }, [groupId, user?.uid]);
+  }, [groupId]);
 
   const dismissSyncError = useCallback(() => setSyncError(null), []);
 
