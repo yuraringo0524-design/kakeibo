@@ -16,24 +16,51 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
+    // 招待コード → groupId の逆引き索引。
+    // groups を全件 list できるようにすると全世帯の招待コードが読めてしまうため、
+    // 「正確なコードを知っている人だけが get できる」この索引だけを公開する。
+    match /inviteCodes/{code} {
+      allow get: if isSignedIn();
+      allow list: if false;                                   // 総当たり列挙を防ぐ
+      allow create: if isSignedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.groupId is string;
+      allow update, delete: if false;
+    }
+
     // 家計グループ本体（名前・メンバー・招待コード）
     match /groups/{groupId} {
+
+      // 参加希望者が自分“だけ”を追加する更新かどうか。
+      // 旧ルールは「更新後の memberIds に自分がいれば通す」だったため、
+      // 任意のグループを乗っ取って明細を読み書きできてしまっていた。
+      function isSelfJoin() {
+        return !(request.auth.uid in resource.data.memberIds)
+          && request.resource.data.memberIds == resource.data.memberIds.concat([request.auth.uid])
+          && request.resource.data.adminId == resource.data.adminId
+          && request.resource.data.inviteCode == resource.data.inviteCode
+          && request.resource.data.name == resource.data.name
+          && resource.data.memberIds.size() < 2                // ふたり用。第三者の相乗りを塞ぐ
+          && request.resource.data.membersById.keys().hasOnly(
+               resource.data.membersById.keys().concat([request.auth.uid])
+             );
+      }
+
       // 作成：自分だけをメンバーとして持つグループを作れる
-      allow create: if isSignedIn() &&
-        request.resource.data.adminId == request.auth.uid &&
-        request.resource.data.memberIds == [request.auth.uid];
+      allow create: if isSignedIn()
+        && request.resource.data.adminId == request.auth.uid
+        && request.resource.data.memberIds == [request.auth.uid];
 
-      // グループ名・招待コード・メンバー一覧は家計の中身（取引明細など）ではないため、
-      // 招待コードで検索できるようサインイン済みなら誰でも読み取り可能にする。
-      // （取引明細など実際の家計データは下の isMember チェックで別途保護される）
-      allow get, list: if isSignedIn();
+      // 読み取り：メンバーのみ。招待コードは inviteCodes 索引から辿るため list は不要。
+      allow get: if isSignedIn() && request.auth.uid in resource.data.memberIds;
+      allow list: if false;
 
-      // 更新：既存メンバーは自由に更新できる。
-      // まだメンバーでない人は「自分を追加する更新」だけ許可（招待コード参加のため）。
+      // 更新：メンバー本人、または招待コードから辿り着いた参加希望者の自己追加のみ
       allow update: if isSignedIn() && (
         request.auth.uid in resource.data.memberIds ||
-        request.auth.uid in request.resource.data.memberIds
+        isSelfJoin()
       );
+
       allow delete: if isSignedIn() && request.auth.uid == resource.data.adminId;
 
       // 家計データ本体（明細・カテゴリ・支払い方法・予算・定期取引・貯金目標・通知設定）

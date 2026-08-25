@@ -1,4 +1,5 @@
 import type { PeriodUnit, Transaction } from '../types';
+import { parseDateStr } from './format';
 
 function startOfWeek(d: Date): Date {
   const day = d.getDay(); // 0=Sun
@@ -46,12 +47,15 @@ export function getPeriodRange(unit: PeriodUnit, anchor: Date, offset: number): 
     end = new Date(y, 11, 31);
     label = `${y}年`;
   }
+  start.setHours(0, 0, 0, 0);
   end.setHours(23, 59, 59, 999);
   return { start, end, label };
 }
 
 export function inRange(dateStr: string, range: PeriodRange): boolean {
-  const t = new Date(dateStr + 'T12:00:00').getTime();
+  const d = parseDateStr(dateStr);
+  if (!d) return false;
+  const t = d.getTime();
   return t >= range.start.getTime() && t <= range.end.getTime();
 }
 
@@ -60,7 +64,25 @@ export function filterByRange(transactions: Transaction[], range: PeriodRange): 
 }
 
 export function sumByType(transactions: Transaction[], type: 'income' | 'expense'): number {
-  return transactions.filter((t) => t.type === type).reduce((s, t) => s + t.amount, 0);
+  return transactions
+    .filter((t) => t.type === type)
+    .reduce((s, t) => s + (Number.isFinite(t.amount) ? t.amount : 0), 0);
+}
+
+/** viewMode（'all' か userId）で明細を絞り込む。全画面で同じ規則を使うための共通関数。 */
+export function scopeByViewMode(transactions: Transaction[], viewMode: string): Transaction[] {
+  return viewMode === 'all' ? transactions : transactions.filter((t) => t.userId === viewMode);
+}
+
+/** 明細を日付降順（同日は登録日時の新しい順）で並べる。比較関数は必ず 0 を返しうる形にする。 */
+export function sortByDateDesc(transactions: Transaction[]): Transaction[] {
+  return [...transactions].sort((a, b) => {
+    if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+    const ca = a.createdAt ?? '';
+    const cb = b.createdAt ?? '';
+    if (ca !== cb) return ca < cb ? 1 : -1;
+    return 0;
+  });
 }
 
 export const periodUnitLabel: Record<PeriodUnit, string> = {

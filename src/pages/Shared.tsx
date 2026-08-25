@@ -4,6 +4,7 @@ import { PageHeader, Card, SectionTitle, ConfirmDialog, inputClass } from '../co
 import { formatYen, displayName } from '../utils/format';
 import { getPeriodRange, filterByRange, sumByType } from '../utils/period';
 import { Copy, Crown, UserPlus, UserMinus, Check, Pencil, Cloud, WifiOff } from 'lucide-react';
+import type { AppUser } from '../types';
 
 export default function Shared() {
   const { group, users, currentUserId, transactions, addMember, removeMember, updateUserName, mode } = useApp();
@@ -14,7 +15,10 @@ export default function Shared() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
 
-  const members = group.memberIds.map((id) => users.find((u) => u.id === id)!).filter(Boolean);
+  // 非 null アサーション + filter(Boolean) では型が絞れず、users に居ない memberId で undefined が漏れる
+  const members = group.memberIds
+    .map((id) => users.find((u) => u.id === id))
+    .filter((u): u is AppUser => Boolean(u));
   const isAdmin = group.adminId === currentUserId;
 
   const range = getPeriodRange('month', new Date(), 0);

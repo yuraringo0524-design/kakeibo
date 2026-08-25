@@ -48,14 +48,19 @@ export default function SavingsGoals() {
 
   function save() {
     if (!name.trim()) return setError('目標名を入力してください');
-    if (!targetAmount || Number(targetAmount) <= 0) return setError('目標金額を正しく入力してください');
+    const target = Number(targetAmount);
+    if (!targetAmount || !Number.isFinite(target) || target <= 0)
+      return setError('目標金額を正しく入力してください');
+    const saved = Number(currentAmount);
+    if (currentAmount !== '' && (!Number.isFinite(saved) || saved < 0))
+      return setError('現在の積立額は0以上で入力してください');
     if (!deadline) return setError('期限を選択してください');
     const payload = {
       name: name.trim(),
       icon,
       color,
-      targetAmount: Number(targetAmount),
-      currentAmount: Number(currentAmount) || 0,
+      targetAmount: target,
+      currentAmount: Math.max(0, Number.isFinite(saved) ? saved : 0),
       deadline,
     };
     if (editTarget) updateSavingsGoal(editTarget.id, payload);
@@ -85,6 +90,7 @@ export default function SavingsGoals() {
             {savingsGoals.map((g) => {
               const ratio = g.targetAmount > 0 ? g.currentAmount / g.targetAmount : 0;
               const remain = Math.max(0, g.targetAmount - g.currentAmount);
+              const achieved = g.targetAmount > 0 && g.currentAmount >= g.targetAmount;
               return (
                 <Card key={g.id} className="relative">
                   <button
@@ -104,7 +110,8 @@ export default function SavingsGoals() {
                         <p className="text-xs text-[var(--text-muted)]">期限 {formatDateFull(g.deadline)}</p>
                       </div>
                       <p className="text-lg font-extrabold" style={{ color: g.color }}>
-                        {(ratio * 100).toFixed(0)}%
+                        {/* バーは 100% で頭打ちなので、数値も 100% を超えて表示しない（達成は別表記） */}
+                        {Math.min(100, Math.round(ratio * 100))}%
                       </p>
                     </div>
                     <ProgressBar ratio={ratio} color={g.color} />
@@ -112,7 +119,9 @@ export default function SavingsGoals() {
                       <span className="font-bold tabular-nums">
                         {formatYen(g.currentAmount)} <span className="text-[var(--text-muted)] font-normal">/ {formatYen(g.targetAmount)}</span>
                       </span>
-                      <span className="text-[var(--text-muted)]">残り {formatYen(remain)}</span>
+                      <span className="text-[var(--text-muted)]">
+                        {achieved ? `達成（+${formatYen(g.currentAmount - g.targetAmount)}）` : `残り ${formatYen(remain)}`}
+                      </span>
                     </div>
                   </button>
                   <button
@@ -173,6 +182,7 @@ export default function SavingsGoals() {
               <input
                 type="number"
                 inputMode="numeric"
+                min={0}
                 value={targetAmount}
                 onChange={(e) => setTargetAmount(e.target.value)}
                 placeholder="300000"
@@ -183,6 +193,7 @@ export default function SavingsGoals() {
               <input
                 type="number"
                 inputMode="numeric"
+                min={0}
                 value={currentAmount}
                 onChange={(e) => setCurrentAmount(e.target.value)}
                 className={inputClass}

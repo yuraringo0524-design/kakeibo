@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { PageHeader, Card, Segmented, FormField, inputClass, ConfirmDialog } from '../../components/ui';
-import { Plus, GripVertical, Trash2, X, Pencil } from 'lucide-react';
+import { Plus, GripVertical, Trash2, X, Pencil, ChevronUp, ChevronDown } from 'lucide-react';
 import type { Category, TransactionType } from '../../types';
 
 const icons = ['🍚', '🧴', '🏠', '💡', '📱', '🚃', '🏥', '🍻', '🎮', '📚', '🛡️', '🐷', '📦', '💰', '💻', '🎁', '🐾', '🌱', '🧸', '☕'];
@@ -20,7 +20,11 @@ export default function CategorySettings() {
   const [color, setColor] = useState(colors[0]);
   const [error, setError] = useState('');
 
-  const list = categories.filter((c) => c.type === tab).sort((a, b) => a.order - b.order);
+  // 'both' 型は支出・収入どちらでも使えるため、どちらのタブでも編集・削除できるようにする
+  // （従来はどのタブにも現れず、作られてしまうと手が出せなかった）
+  const list = categories
+    .filter((c) => c.type === tab || c.type === 'both')
+    .sort((a, b) => a.order - b.order);
 
   function openNew() {
     setEditTarget(null);
@@ -47,15 +51,29 @@ export default function CategorySettings() {
     setShowForm(false);
   }
 
+  function applyOrder(ids: string[], from: number, to: number) {
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...ids];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    reorderCategories(next);
+  }
+
   function handleDrop(targetId: string) {
     if (!dragId || dragId === targetId) return;
     const ids = list.map((c) => c.id);
-    const from = ids.indexOf(dragId);
-    const to = ids.indexOf(targetId);
-    ids.splice(from, 1);
-    ids.splice(to, 0, dragId);
-    reorderCategories(ids);
+    applyOrder(ids, ids.indexOf(dragId), ids.indexOf(targetId));
     setDragId(null);
+  }
+
+  // HTML5 の drag & drop はスマホのタッチでは発火しない。
+  // このアプリはモバイル前提なので、上下ボタンでも並び替えられるようにする。
+  function move(id: string, dir: -1 | 1) {
+    const ids = list.map((c) => c.id);
+    const from = ids.indexOf(id);
+    const to = from + dir;
+    if (to < 0 || to >= ids.length) return;
+    applyOrder(ids, from, to);
   }
 
   return (
@@ -84,16 +102,34 @@ export default function CategorySettings() {
         </div>
 
         <Card className="p-0 divide-y divide-[var(--border)]">
-          {list.map((c) => (
+          {list.map((c, idx) => (
             <div
               key={c.id}
               draggable
               onDragStart={() => setDragId(c.id)}
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => handleDrop(c.id)}
-              className="flex items-center gap-2 px-4 py-3"
+              className="flex items-center gap-1.5 px-3 py-3"
             >
-              <GripVertical size={16} className="text-[var(--text-muted)] shrink-0 cursor-grab" />
+              <GripVertical size={16} className="text-[var(--text-muted)] shrink-0 cursor-grab hidden sm:block" />
+              <div className="flex flex-col shrink-0">
+                <button
+                  onClick={() => move(c.id, -1)}
+                  disabled={idx === 0}
+                  className="w-7 h-6 flex items-center justify-center text-[var(--text-muted)] disabled:opacity-25"
+                  aria-label={`${c.name}を上へ移動`}
+                >
+                  <ChevronUp size={16} />
+                </button>
+                <button
+                  onClick={() => move(c.id, 1)}
+                  disabled={idx === list.length - 1}
+                  className="w-7 h-6 flex items-center justify-center text-[var(--text-muted)] disabled:opacity-25"
+                  aria-label={`${c.name}を下へ移動`}
+                >
+                  <ChevronDown size={16} />
+                </button>
+              </div>
               <span
                 className="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0"
                 style={{ background: `${c.color}22` }}
@@ -114,7 +150,9 @@ export default function CategorySettings() {
             </div>
           ))}
         </Card>
-        <p className="text-xs text-[var(--text-muted)] mt-2 px-1">項目を長押ししてドラッグすると並び替えできます。</p>
+        <p className="text-xs text-[var(--text-muted)] mt-2 px-1">
+          ▲▼ ボタンで並び替えできます（パソコンではドラッグでも並び替えられます）。
+        </p>
       </div>
 
       {showForm && (

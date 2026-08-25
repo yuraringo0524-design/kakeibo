@@ -1,19 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Card, SectionTitle, ProgressBar, inputClass } from '../components/ui';
-import { formatYen } from '../utils/format';
-import { getPeriodRange, filterByRange, sumByType } from '../utils/period';
+import { formatYen, monthKeyOf } from '../utils/format';
+import { getPeriodRange, filterByRange, sumByType, scopeByViewMode } from '../utils/period';
 import { Pencil, Check, AlertTriangle } from 'lucide-react';
 
-function currentMonthKey(offset = 0) {
-  const d = new Date();
-  d.setMonth(d.getMonth() + offset);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
 export default function Budget() {
-  const { budgets, categories, transactions, setBudget } = useApp();
-  const monthKey = currentMonthKey(0);
+  const { budgets, categories, transactions, viewMode, setBudget, notificationSettings } = useApp();
+  const now = new Date();
+  // setMonth() を使うと 3/31 のような月末日でロールオーバーするため monthKeyOf を使う
+  const monthKey = monthKeyOf(now, 0);
   const budget = budgets.find((b) => b.month === monthKey);
 
   const [editing, setEditing] = useState(false);
@@ -22,15 +18,20 @@ export default function Budget() {
     Object.fromEntries((budget?.categoryBudgets ?? []).map((c) => [c.categoryId, String(c.amount)]))
   );
 
-  const now = new Date();
   const range = getPeriodRange('month', now, 0);
-  const monthTx = filterByRange(transactions, range);
+  // ホームの「今月の予算」と同じ絞り込み（全体／個人）を適用して、画面ごとに数字が食い違わないようにする
+  const scopedTx = useMemo(() => scopeByViewMode(transactions, viewMode), [transactions, viewMode]);
+  const monthTx = useMemo(() => filterByRange(scopedTx, range), [scopedTx, range]);
   const monthExpense = sumByType(monthTx, 'expense');
   const totalBudget = budget?.totalBudget ?? 0;
   const remain = totalBudget - monthExpense;
   const ratio = totalBudget > 0 ? monthExpense / totalBudget : 0;
+  const warnPct = notificationSettings.thresholds.length ? Math.min(...notificationSettings.thresholds) : 80;
 
-  const expenseCategories = categories.filter((c) => c.type === 'expense');
+  // 'both' 型のカテゴリも支出に使えるため、予算設定の対象から外さない
+  const expenseCategories = categories
+    .filter((c) => c.type === 'expense' || c.type === 'both')
+    .sort((a, b) => a.order - b.order);
 
   const categoryUsage = useMemo(() => {
     return (budget?.categoryBudgets ?? []).map((cb) => {
@@ -60,8 +61,8 @@ export default function Budget() {
   function save() {
     const categoryBudgets = Object.entries(catInputs)
       .filter(([, v]) => v !== '')
-      .map(([categoryId, v]) => ({ categoryId, amount: Number(v) || 0 }));
-    setBudget(monthKey, Number(totalInput) || 0, categoryBudgets);
+      .map(([categoryId, v]) => ({ categoryId, amount: Math.max(0, Number(v) || 0) }));
+    setBudget(monthKey, Math.max(0, Number(totalInput) || 0), categoryBudgets);
     setEditing(false);
   }
 
@@ -96,6 +97,7 @@ export default function Budget() {
               <input
                 type="number"
                 inputMode="numeric"
+                min={0}
                 value={totalInput}
                 onChange={(e) => setTotalInput(e.target.value)}
                 className={`${inputClass} text-xl font-extrabold`}
@@ -104,7 +106,7 @@ export default function Budget() {
           ) : (
             <p className="text-2xl font-extrabold tabular-nums mb-2">{formatYen(totalBudget)}</p>
           )}
-          <ProgressBar ratio={ratio} warn={ratio >= 0.8} />
+          <ProgressBar ratio={ratio} warn={totalBudget > 0 && ratio * 100 >= warnPct} />
           <div className="flex justify-between mt-2 text-sm">
             <span className="text-[var(--text-muted)]">使用額 {formatYen(monthExpense)}</span>
             <span className={`font-bold ${remain < 0 ? 'text-warn-500' : 'text-blue-500'}`}>
@@ -112,8 +114,10 @@ export default function Budget() {
               {formatYen(Math.abs(remain))}
             </span>
           </div>
-          <p className="text-xs text-[var(--text-muted)] mt-1">消化率 {(ratio * 100).toFixed(0)}%</p>
-          {remain < 0 && (
+          <p className="text-xs text-[var(--text-muted)] mt-1">
+            消化率 {totalBudget > 0 ? `${(ratio * 100).toFixed(0)}%` : '—（総予算が未設定）'}
+          </p>
+          {totalBudget > 0 && remain < 0 && (
             <div className="mt-3 flex items-center gap-1.5 text-warn-500 text-xs font-bold bg-warn-500/10 rounded-xl px-3 py-2">
               <AlertTriangle size={14} />
               予算を{formatYen(Math.abs(remain))}超過しています
@@ -133,6 +137,7 @@ export default function Budget() {
                     className={`tap-target shrink-0 w-8 h-8 rounded-lg border flex items-center justify-center text-sm ${
                       checked ? 'bg-orange-500 border-orange-500 text-white' : 'border-[var(--border)]'
                     }`}
+                    aria-pressed={checked}
                   >
                     {c.icon}
                   </button>
@@ -141,6 +146,7 @@ export default function Budget() {
                     <input
                       type="number"
                       inputMode="numeric"
+                      min={0}
                       value={catInputs[c.id]}
                       onChange={(e) => setCatInputs((p) => ({ ...p, [c.id]: e.target.value }))}
                       className={`${inputClass} w-28 py-2 text-sm`}
@@ -160,15 +166,17 @@ export default function Budget() {
           <div className="space-y-3 mb-4">
             {categoryUsage.map((c) => {
               const over = c.used > c.amount;
-              const warn = c.ratio >= 0.8;
+              const warn = c.amount > 0 && c.ratio * 100 >= warnPct;
               return (
                 <Card key={c.categoryId}>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-sm font-bold flex items-center gap-1.5">
-                      {c.cat?.icon} {c.cat?.name}
+                      {c.cat ? `${c.cat.icon} ${c.cat.name}` : '📦 削除されたカテゴリ'}
                       {warn && <span aria-hidden>⚠️</span>}
                     </span>
-                    <span className="text-xs text-[var(--text-muted)]">{(c.ratio * 100).toFixed(0)}%</span>
+                    <span className="text-xs text-[var(--text-muted)]">
+                      {c.amount > 0 ? `${(c.ratio * 100).toFixed(0)}%` : '—'}
+                    </span>
                   </div>
                   <ProgressBar ratio={c.ratio} warn={warn} height={8} />
                   <div className="flex justify-between mt-1.5 text-xs">

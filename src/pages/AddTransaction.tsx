@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Segmented, FormField, inputClass, ConfirmDialog } from '../components/ui';
-import { todayStr, displayName } from '../utils/format';
+import { todayStr, displayName, parseDateStr } from '../utils/format';
+import { downscaleReceipt } from '../utils/image';
 import type { TransactionType } from '../types';
 import { Camera, Check, Trash2, X } from 'lucide-react';
 
@@ -34,9 +35,10 @@ export default function AddTransaction() {
   const [userId, setUserId] = useState(existing?.userId ?? currentUserId);
   const [memo, setMemo] = useState(existing?.memo ?? '');
   const [receiptImage, setReceiptImage] = useState<string | null>(existing?.receiptImage ?? null);
-  const [ocrRunning, setOcrRunning] = useState(false);
-  const [ocrDone, setOcrDone] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const [attached, setAttached] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [imageWarning, setImageWarning] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -44,38 +46,52 @@ export default function AddTransaction() {
     .filter((c) => c.type === type || c.type === 'both')
     .sort((a, b) => a.order - b.order);
 
+  // 種別を切り替えるとカテゴリが空になる。編集中でも先頭カテゴリを補完しないと、
+  // 「カテゴリを選択してください」で保存できないまま詰まる。
   useEffect(() => {
-    if (!existing && visibleCategories.length && !categoryId) {
+    if (visibleCategories.length && !categoryId) {
       setCategoryId(visibleCategories[0].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type]);
+  }, [type, categories.length]);
 
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = ''; // 同じ写真を選び直せるようにする
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setReceiptImage(reader.result as string);
-      setOcrRunning(true);
-      setOcrDone(false);
-      // 疑似OCR: 実際の読み取りの代わりに、少し待ってから読み取り結果を反映する
-      setTimeout(() => {
-        setAmount((prev) => prev || String(Math.floor(Math.random() * 3000) + 500));
-        setDate((prev) => prev || todayStr());
-        setMemo((prev) => prev || 'レシート読み取り（要確認）');
-        setOcrRunning(false);
-        setOcrDone(true);
-      }, 1200);
-    };
-    reader.readAsDataURL(file);
+
+    setAttaching(true);
+    setAttached(false);
+    setImageWarning(null);
+
+    // 撮影したままのサイズだと localStorage / Firestore の上限に当たって保存が失敗する
+    const { dataUrl, warning } = await downscaleReceipt(file);
+    if (warning) setImageWarning(warning);
+    if (!dataUrl) {
+      setAttaching(false);
+      return;
+    }
+    setReceiptImage(dataUrl);
+    // OCR は未実装。以前はここで Math.random() の金額を入れたうえで
+    // 「OCRで金額・日付・メモを読み取りました」と表示しており、
+    // 実在しない金額が家計簿に記録されうる状態だった。金額は自動入力しない。
+    setDate((prev) => prev || todayStr());
+    setAttaching(false);
+    setAttached(true);
   }
 
   function validate() {
     const e: Record<string, string> = {};
     const amt = Number(amount);
-    if (!amount || Number.isNaN(amt) || amt <= 0) e.amount = '金額を正しく入力してください';
+    if (!amount.trim() || !Number.isFinite(amt) || amt <= 0) {
+      e.amount = '金額を正しく入力してください';
+    } else if (amt > 1_000_000_000) {
+      e.amount = '金額が大きすぎます（10億円未満で入力してください）';
+    } else if (!Number.isInteger(amt)) {
+      e.amount = '金額は円単位（整数）で入力してください';
+    }
     if (!date) e.date = '日付を選択してください';
+    else if (!parseDateStr(date)) e.date = '日付の形式が正しくありません';
     if (!categoryId) e.category = 'カテゴリを選択してください';
     if (!paymentMethodId) e.paymentMethod = '支払い方法を選択してください';
     setErrors(e);
@@ -83,6 +99,11 @@ export default function AddTransaction() {
   }
 
   function handleSubmit() {
+    // 編集で開いたのに対象が見つからない（別端末で削除された等）まま新規登録しない
+    if (editId && !existing) {
+      setErrors({ amount: 'この明細は見つかりませんでした。削除された可能性があります。' });
+      return;
+    }
     if (!validate()) return;
     const payload = {
       type,
@@ -242,16 +263,17 @@ export default function AddTransaction() {
               <button
                 onClick={() => {
                   setReceiptImage(null);
-                  setOcrDone(false);
+                  setAttached(false);
+                  setImageWarning(null);
                 }}
                 className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center"
                 aria-label="レシート画像を削除"
               >
                 <X size={16} />
               </button>
-              {ocrRunning && (
+              {attaching && (
                 <div className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center text-white text-sm font-bold">
-                  文字を読み取り中…
+                  画像を準備中…
                 </div>
               )}
             </div>
@@ -264,9 +286,12 @@ export default function AddTransaction() {
               <span className="text-sm font-bold">レシートを撮影・添付</span>
             </button>
           )}
-          {ocrDone && (
+          {imageWarning && (
+            <p className="text-xs text-warn-500 font-bold mt-2">⚠ {imageWarning}</p>
+          )}
+          {attached && (
             <p className="text-xs text-blue-500 font-bold mt-2">
-              ✓ OCRで金額・日付・メモを読み取りました。内容を確認・修正してください。
+              ✓ レシート画像を添付しました。金額・メモはご自身で入力してください。
             </p>
           )}
         </FormField>

@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { Card, SectionTitle, ProgressBar, Segmented } from '../components/ui';
-import { formatYen, formatDateJp, displayName } from '../utils/format';
-import { getPeriodRange, filterByRange, sumByType } from '../utils/period';
+import { formatYen, formatDateJp, displayName, monthKeyOf } from '../utils/format';
+import { getPeriodRange, filterByRange, sumByType, scopeByViewMode, sortByDateDesc } from '../utils/period';
+import { maybeNotifyBudget } from '../utils/notify';
 import type { PeriodUnit } from '../types';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { Bell, ChevronRight, Moon, Sun, Users, User } from 'lucide-react';
@@ -26,13 +27,11 @@ export default function Home() {
     setViewMode,
     darkMode,
     toggleDarkMode,
+    notificationSettings,
   } = useApp();
   const [unit, setUnit] = useState<PeriodUnit>('month');
 
-  const scopedTx = useMemo(
-    () => (viewMode === 'all' ? transactions : transactions.filter((t) => t.userId === viewMode)),
-    [transactions, viewMode]
-  );
+  const scopedTx = useMemo(() => scopeByViewMode(transactions, viewMode), [transactions, viewMode]);
 
   const now = new Date();
   const range = getPeriodRange(unit, now, 0);
@@ -46,15 +45,32 @@ export default function Home() {
   const prevExpense = sumByType(previous, 'expense');
   const expenseDiff = expense - prevExpense;
 
-  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const monthKey = monthKeyOf(now, 0);
   const budget = budgets.find((b) => b.month === monthKey);
   const monthRange = getPeriodRange('month', now, 0);
   const monthTx = filterByRange(scopedTx, monthRange);
   const monthExpense = sumByType(monthTx, 'expense');
-  const budgetRatio = budget ? monthExpense / budget.totalBudget : 0;
-  const budgetRemain = budget ? budget.totalBudget - monthExpense : 0;
-  const budgetWarn = budgetRatio >= 0.8;
-  const budgetOver = budget ? monthExpense > budget.totalBudget : false;
+  const totalBudget = budget?.totalBudget ?? 0;
+  // 総予算 0 でゼロ除算すると Infinity になり、予算画面（ガード済み）と表示が食い違う
+  const budgetRatio = totalBudget > 0 ? monthExpense / totalBudget : 0;
+  const budgetRemain = totalBudget - monthExpense;
+  // 警告のしきい値は通知設定の最小値を使う（従来は 0.8 決め打ちで設定が無視されていた）
+  const warnPct = notificationSettings.thresholds.length
+    ? Math.min(...notificationSettings.thresholds)
+    : 80;
+  const budgetWarn = totalBudget > 0 && budgetRatio * 100 >= warnPct;
+  const budgetOver = totalBudget > 0 && monthExpense > totalBudget;
+
+  // 予算しきい値に到達したら通知する（許可済みかつ通知オンのときだけ）
+  useEffect(() => {
+    if (!budget || totalBudget <= 0) return;
+    maybeNotifyBudget({
+      monthKey,
+      ratioPct: budgetRatio * 100,
+      thresholds: notificationSettings.thresholds,
+      pushEnabled: notificationSettings.pushEnabled,
+    });
+  }, [budget, totalBudget, budgetRatio, monthKey, notificationSettings]);
 
   const categoryTotals = useMemo(() => {
     const map = new Map<string, number>();
@@ -70,7 +86,8 @@ export default function Home() {
       .sort((a, b) => b.amount - a.amount);
   }, [current, categories]);
 
-  const recent = [...scopedTx].slice(0, 5);
+  // 「最近の明細」は日付降順で並べる（従来は配列の先頭 5 件で、先月の明細が並ぶことがあった）
+  const recent = useMemo(() => sortByDateDesc(scopedTx).slice(0, 5), [scopedTx]);
 
   return (
     <div className="pb-4">
@@ -160,7 +177,7 @@ export default function Home() {
                 <ProgressBar ratio={budgetRatio} warn={budgetWarn} />
                 <div className="flex justify-between mt-2 text-xs">
                   <span className="text-[var(--text-muted)]">
-                    使用 {formatYen(monthExpense)} / {formatYen(budget.totalBudget)}
+                    使用 {formatYen(monthExpense)} / {formatYen(totalBudget)}
                   </span>
                   <span className={`font-bold ${budgetOver ? 'text-warn-500' : 'text-blue-500'}`}>
                     {budgetOver ? '予算超過 ' : '残り '}
@@ -201,7 +218,7 @@ export default function Home() {
                       strokeWidth={0}
                     >
                       {categoryTotals.map((entry) => (
-                        <Cell key={entry.categoryId} fill={entry.category?.color ?? '#ccc'} />
+                        <Cell key={entry.categoryId} fill={entry.category?.color ?? '#B7ADA3'} />
                       ))}
                     </Pie>
                   </PieChart>
@@ -213,10 +230,10 @@ export default function Home() {
                     <span className="flex items-center gap-1.5 truncate">
                       <span
                         className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ background: c.category?.color }}
+                        style={{ background: c.category?.color ?? '#B7ADA3' }}
                       />
                       <span className="truncate">
-                        {c.category?.icon} {c.category?.name}
+                        {c.category ? `${c.category.icon} ${c.category.name}` : '📦 未分類'}
                       </span>
                     </span>
                     <span className="font-bold tabular-nums shrink-0 ml-2">{formatYen(c.amount)}</span>
@@ -251,12 +268,12 @@ export default function Home() {
                 >
                   <span
                     className="w-9 h-9 rounded-full flex items-center justify-center text-base shrink-0"
-                    style={{ background: `${cat?.color}22` }}
+                    style={{ background: `${cat?.color ?? '#B7ADA3'}22` }}
                   >
-                    {cat?.icon}
+                    {cat?.icon ?? '📦'}
                   </span>
                   <span className="flex-1 min-w-0">
-                    <p className="text-sm font-bold truncate">{t.memo || cat?.name}</p>
+                    <p className="text-sm font-bold truncate">{t.memo || cat?.name || '未分類'}</p>
                     <p className="text-xs text-[var(--text-muted)]">
                       {formatDateJp(t.date)} ・ {displayName(user?.name)}
                     </p>

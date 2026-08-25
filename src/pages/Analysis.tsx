@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Card, SectionTitle, Segmented, EmptyState } from '../components/ui';
 import { formatYen, formatYenShort } from '../utils/format';
-import { getPeriodRange, filterByRange, sumByType } from '../utils/period';
+import { getPeriodRange, filterByRange, sumByType, scopeByViewMode } from '../utils/period';
 import type { PeriodUnit } from '../types';
 import {
   PieChart,
@@ -25,21 +25,27 @@ const periodOptions: { value: PeriodUnit; label: string }[] = [
 ];
 
 export default function Analysis() {
-  const { transactions, categories } = useApp();
+  const { transactions, categories, viewMode } = useApp();
   const [unit, setUnit] = useState<PeriodUnit>('month');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const now = new Date();
+  // 画面を開いたまま日付を跨ぐと、ヘッダの range と棒グラフの now が別インスタンスになり
+  // 1 か月ずれる。基準時刻は 1 つに固定する。
+  const now = useMemo(() => new Date(), []);
+
+  // ホーム・予算と同じ絞り込み（全体／個人）を適用する
+  const scopedTx = useMemo(() => scopeByViewMode(transactions, viewMode), [transactions, viewMode]);
 
   const range = getPeriodRange(unit, now, 0);
   const prevRange = getPeriodRange(unit, now, -1);
-  const current = filterByRange(transactions, range);
-  const previous = filterByRange(transactions, prevRange);
+  const current = filterByRange(scopedTx, range);
+  const previous = filterByRange(scopedTx, prevRange);
 
   const income = sumByType(current, 'income');
   const expense = sumByType(current, 'expense');
   const prevExpense = sumByType(previous, 'expense');
   const expenseDiffAmount = expense - prevExpense;
-  const expenseDiffPct = prevExpense > 0 ? (expenseDiffAmount / prevExpense) * 100 : 0;
+  // 前期間の支出が 0 のとき増減率は定義できない。0% と表示すると「変化なし」に見えるため null にする。
+  const expenseDiffPct = prevExpense > 0 ? (expenseDiffAmount / prevExpense) * 100 : null;
 
   const categoryTotals = useMemo(() => {
     const map = new Map<string, number>();
@@ -52,15 +58,20 @@ export default function Analysis() {
   const insights = useMemo(() => {
     const prevMap = new Map<string, number>();
     previous.filter((t) => t.type === 'expense').forEach((t) => prevMap.set(t.categoryId, (prevMap.get(t.categoryId) ?? 0) + t.amount));
-    return categoryTotals
-      .map((c) => {
-        const prevAmount = prevMap.get(c.categoryId) ?? 0;
-        return { ...c, diff: c.amount - prevAmount };
-      })
+    // 当期の集計だけを起点にすると、支出がゼロになったカテゴリの「減った」が出ない
+    const currentMap = new Map(categoryTotals.map((c) => [c.categoryId, c.amount]));
+    const ids = new Set([...currentMap.keys(), ...prevMap.keys()]);
+    return Array.from(ids)
+      .map((categoryId) => ({
+        categoryId,
+        amount: currentMap.get(categoryId) ?? 0,
+        category: categories.find((c) => c.id === categoryId),
+        diff: (currentMap.get(categoryId) ?? 0) - (prevMap.get(categoryId) ?? 0),
+      }))
       .filter((c) => Math.abs(c.diff) >= 500)
       .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff))
       .slice(0, 3);
-  }, [categoryTotals, previous]);
+  }, [categoryTotals, previous, categories]);
 
   // bar chart: last several sub-periods
   const barData = useMemo(() => {
@@ -68,7 +79,7 @@ export default function Analysis() {
     const arr = [];
     for (let i = n - 1; i >= 0; i--) {
       const r = getPeriodRange(unit, now, -i);
-      const txs = filterByRange(transactions, r);
+      const txs = filterByRange(scopedTx, r);
       arr.push({
         label: shortLabel(unit, r.label),
         収入: sumByType(txs, 'income'),
@@ -77,7 +88,7 @@ export default function Analysis() {
     }
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unit, transactions]);
+  }, [unit, scopedTx]);
 
   const drilldown = selectedCategory
     ? current.filter((t) => t.type === 'expense' && t.categoryId === selectedCategory)
@@ -88,7 +99,14 @@ export default function Analysis() {
       <PageHeader title="分析" />
       <div className="px-4 pt-3">
         <div className="mb-4">
-          <Segmented options={periodOptions} value={unit} onChange={setUnit} />
+          <Segmented
+            options={periodOptions}
+            value={unit}
+            onChange={(v) => {
+              setUnit(v);
+              setSelectedCategory(null); // 期間を変えたら、その期間に存在しない選択を持ち越さない
+            }}
+          />
         </div>
 
         <Card className="mb-4">
@@ -111,7 +129,7 @@ export default function Analysis() {
                     <TrendingDown size={14} className="text-blue-500 shrink-0" />
                   )}
                   <span>
-                    {c.category?.name}が前の期間より
+                    {c.category?.name ?? '未分類'}が前の期間より
                     <span className={`font-bold ${c.diff > 0 ? 'text-warn-500' : 'text-blue-500'}`}>
                       {' '}
                       {formatYen(Math.abs(c.diff))}
@@ -141,7 +159,11 @@ export default function Analysis() {
                       outerRadius={85}
                       paddingAngle={2}
                       strokeWidth={0}
-                      onClick={(d: any) => setSelectedCategory(d.categoryId)}
+                      onClick={(d: unknown) => {
+                        const entry = d as { categoryId?: string; payload?: { categoryId?: string } } | null;
+                        const id = entry?.categoryId ?? entry?.payload?.categoryId;
+                        if (id) setSelectedCategory(id);
+                      }}
                     >
                       {categoryTotals.map((entry) => (
                         <Cell
@@ -166,9 +188,12 @@ export default function Analysis() {
                       }`}
                     >
                       <span className="flex items-center gap-1.5 truncate">
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: c.category?.color }} />
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ background: c.category?.color ?? '#B7ADA3' }}
+                        />
                         <span className="truncate">
-                          {c.category?.icon} {c.category?.name}
+                          {c.category ? `${c.category.icon} ${c.category.name}` : '📦 未分類'}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 shrink-0">
@@ -188,7 +213,7 @@ export default function Analysis() {
         {selectedCategory && (
           <Card className="mb-4 p-0 divide-y divide-[var(--border)]">
             <p className="text-xs font-bold text-[var(--text-muted)] px-4 pt-3 pb-2">
-              {categories.find((c) => c.id === selectedCategory)?.name} の明細（{drilldown.length}件）
+              {categories.find((c) => c.id === selectedCategory)?.name ?? '未分類'} の明細（{drilldown.length}件）
             </p>
             {drilldown.map((t) => (
               <div key={t.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
@@ -224,8 +249,8 @@ export default function Analysis() {
             前の期間比 支出{' '}
             <span className={expenseDiffAmount > 0 ? 'text-warn-500 font-bold' : 'text-blue-500 font-bold'}>
               {expenseDiffAmount > 0 ? '+' : ''}
-              {formatYen(expenseDiffAmount)} ({expenseDiffPct > 0 ? '+' : ''}
-              {expenseDiffPct.toFixed(1)}%)
+              {formatYen(expenseDiffAmount)}
+              {expenseDiffPct === null ? '' : ` (${expenseDiffPct > 0 ? '+' : ''}${expenseDiffPct.toFixed(1)}%)`}
             </span>
           </p>
         </Card>
