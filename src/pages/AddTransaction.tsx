@@ -35,8 +35,8 @@ export default function AddTransaction() {
   const [userId, setUserId] = useState(existing?.userId ?? currentUserId);
   const [memo, setMemo] = useState(existing?.memo ?? '');
   const [receiptImage, setReceiptImage] = useState<string | null>(existing?.receiptImage ?? null);
-  const [ocrRunning, setOcrRunning] = useState(false);
-  const [ocrDone, setOcrDone] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const [attached, setAttached] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [imageWarning, setImageWarning] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -60,27 +60,24 @@ export default function AddTransaction() {
     e.target.value = ''; // 同じ写真を選び直せるようにする
     if (!file) return;
 
-    setOcrRunning(true);
-    setOcrDone(false);
+    setAttaching(true);
+    setAttached(false);
     setImageWarning(null);
 
     // 撮影したままのサイズだと localStorage / Firestore の上限に当たって保存が失敗する
     const { dataUrl, warning } = await downscaleReceipt(file);
     if (warning) setImageWarning(warning);
     if (!dataUrl) {
-      setOcrRunning(false);
+      setAttaching(false);
       return;
     }
     setReceiptImage(dataUrl);
-
-    // 疑似OCR: 実際の読み取りの代わりに、少し待ってから読み取り結果を反映する
-    setTimeout(() => {
-      setAmount((prev) => prev || String(Math.floor(Math.random() * 3000) + 500));
-      setDate((prev) => prev || todayStr());
-      setMemo((prev) => prev || 'レシート読み取り（要確認）');
-      setOcrRunning(false);
-      setOcrDone(true);
-    }, 1200);
+    // OCR は未実装。以前はここで Math.random() の金額を入れたうえで
+    // 「OCRで金額・日付・メモを読み取りました」と表示しており、
+    // 実在しない金額が家計簿に記録されうる状態だった。金額は自動入力しない。
+    setDate((prev) => prev || todayStr());
+    setAttaching(false);
+    setAttached(true);
   }
 
   function validate() {
@@ -266,16 +263,17 @@ export default function AddTransaction() {
               <button
                 onClick={() => {
                   setReceiptImage(null);
-                  setOcrDone(false);
+                  setAttached(false);
+                  setImageWarning(null);
                 }}
                 className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center"
                 aria-label="レシート画像を削除"
               >
                 <X size={16} />
               </button>
-              {ocrRunning && (
+              {attaching && (
                 <div className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center text-white text-sm font-bold">
-                  文字を読み取り中…
+                  画像を準備中…
                 </div>
               )}
             </div>
@@ -291,9 +289,9 @@ export default function AddTransaction() {
           {imageWarning && (
             <p className="text-xs text-warn-500 font-bold mt-2">⚠ {imageWarning}</p>
           )}
-          {ocrDone && (
+          {attached && (
             <p className="text-xs text-blue-500 font-bold mt-2">
-              ✓ OCRで金額・日付・メモを読み取りました。内容を確認・修正してください。
+              ✓ レシート画像を添付しました。金額・メモはご自身で入力してください。
             </p>
           )}
         </FormField>
