@@ -2,6 +2,18 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // collectionGroup('invitations') は特定の groups/{groupId} を起点に
+    // しない横断クエリなので、/groups/{groupId}/invitations/... の
+    // ネストした match だけでは認可対象にならない。Rules v2 の
+    // recursive wildcard で collection group 用の match を明示する。
+    // クエリ側にも invitedEmail == request.auth.token.email の where 条件が
+    // 必須であり、他人宛の招待を返せないことをルールで保証する。
+    match /{path=**}/invitations/{invitationId} {
+      allow list: if request.auth != null &&
+        request.auth.token.email != null &&
+        resource.data.invitedEmail == request.auth.token.email.lower();
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
